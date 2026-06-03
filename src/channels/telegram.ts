@@ -463,12 +463,15 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       }
 
       case "persona":
-        if (cmd.args) {
+        if (cmd.args === "reset") {
+          await env.CONFIG.delete(`persona:${sessionId}`);
+          await sendText(env, chatId, "Persona reset to default.");
+        } else if (cmd.args) {
           await env.CONFIG.put(`persona:${sessionId}`, cmd.args);
           await sendText(env, chatId, "Persona updated.");
         } else {
           const current = (await env.CONFIG.get(`persona:${sessionId}`)) || env.DEFAULT_SYSTEM_PROMPT || "default";
-          await sendText(env, chatId, `Current persona: ${current}\n\nUsage: /persona <prompt>`);
+          await sendText(env, chatId, `Current persona: ${current}\n\nUsage: /persona <prompt> or /persona reset`);
         }
         return;
 
