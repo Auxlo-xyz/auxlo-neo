@@ -21,6 +21,7 @@ export interface Env {
   DEFAULT_SYSTEM_PROMPT?: string;
   ALLOWED_USERS?: string;
   API_KEY?: string;
+  EXECUTOR_URL?: string;
 }
 
 export interface Message {

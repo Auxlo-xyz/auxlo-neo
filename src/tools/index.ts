@@ -102,7 +102,7 @@ export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[
       type: "function",
       function: {
         name: "x_fetch",
-        description: "Fetch a tweet or user profile from X/Twitter. Returns the tweet content, author, likes, retweets, and replies. No API key required.",
+        description: "Fetch tweets or user profiles from X/Twitter. Returns the tweet content, author, likes, retweets, and replies. No API key required.",
         parameters: {
           type: "object",
           properties: {
@@ -117,6 +117,27 @@ export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[
             }
           },
           required: ["fetch_type", "id"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "remote_exec",
+        description: "Execute a shell command in a remote ephemeral Linux environment (Vercel Fluid Compute). Supports git, npm, python, ffmpeg, etc. Use this for repo analysis, builds, and automation.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: {
+              type: "string",
+              description: "The shell command to execute (e.g., 'git clone ... && ls -R')"
+            },
+            workspace_id: {
+              type: "string",
+              description: "Optional ID to persist state across multiple execution calls."
+            }
+          },
+          required: ["command"]
         }
       }
     },
@@ -153,6 +174,8 @@ export async function executeTool(
         return await toolRecall(env, ctx?.sessionId, args.query as string);
       case "x_fetch":
         return await toolXFetch(args.fetch_type as string, args.id as string);
+      case "remote_exec":
+        return await toolRemoteExec(env, args.command as string, args.workspace_id as string);
       case "current_time":
         return { content: new Date().toISOString() };
       default:
@@ -422,5 +445,40 @@ async function toolXFetch(fetchType: string, id: string): Promise<ToolResult> {
       `Followers: ${followers} | Following: ${following} | Tweets: ${tweets}`,
     ].join("\n"),
   };
+}
+
+async function toolRemoteExec(env: Env, command: string, workspaceId?: string): Promise<ToolResult> {
+  const executorUrl = env.EXECUTOR_URL;
+  if (!executorUrl) {
+    return { content: "Remote executor not configured. Please set EXECUTOR_URL in environment.", error: true };
+  }
+
+  try {
+    const response = await fetch(executorUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        command,
+        workspace_id: workspaceId,
+        api_key: env.API_KEY, // Pass API key for authentication if needed
+      }),
+    });
+
+    if (!response.ok) {
+      return { content: `Executor error: HTTP ${response.status}`, error: true };
+    }
+
+    const data: any = await response.json();
+    const stdout = data.stdout || "";
+    const stderr = data.stderr || "";
+
+    return {
+      content: (stdout && stderr) 
+        ? `STDOUT:\n${stdout}\n\nSTDERR:\n${stderr}` 
+        : stdout || stderr || "Command executed successfully with no output.",
+    };
+  } catch (e: any) {
+    return { content: `Execution failed: ${e.message}`, error: true };
+  }
 }
 

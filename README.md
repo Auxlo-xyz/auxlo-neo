@@ -6,11 +6,15 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
 
 ## What you get
 
+- **Dual-Layer Memory**:
+  - **Automatic Reflection**: Background analysis of conversations to learn preferences and facts across sessions.
+  - **Explicit Memory**: Manual `remember` and `recall` tools for high-priority storage.
+- **Context Compaction**: Automatic summarization of long conversations to keep tokens low while preserving context.
 - **OpenAI-compatible API** at `/v1/chat/completions` (drop-in replacement for any OpenAI client)
-- **Telegram bot** webhook handler
+- **Telegram bot** webhook handler with typing indicators and usage stats
 - **Discord bot** slash commands (`/chat`, `/reset`, `/help`)
 - **Multi-provider LLM support**: OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, DeepSeek
-- **Built-in tools**: `web_search` (DuckDuckGo, no API key), `web_fetch` (URL reading), `send_message`, `current_time`
+- **Built-in tools**: `web_search` (DuckDuckGo), `web_fetch` (URL reading), `x_fetch` (X/Twitter), `send_message`, `current_time`
 - **Session memory** via Cloudflare KV (7-day TTL)
 - **Tool calling loop** (up to 8 rounds per request)
 - **Streaming** support for OpenAI-compatible API
@@ -22,6 +26,8 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
 Request → index.ts (router) → Channel handler → agentChat() → Provider loop → Tools → Response
                                          ↕
                                     KV (sessions, memory, config)
+                                         ↕
+                                 Compression & Reflection
 ```
 
 Everything is stateless HTTP. No long-lived processes, no WebSocket connections, no filesystem, no databases. Cloudflare KV handles all persistence.
@@ -167,6 +173,7 @@ curl -X POST https://your-worker.workers.dev/v1/chat/completions \
 - Telegram + Discord channel integration
 - Streaming responses
 - Web search (DuckDuckGo)
+- Automatic Memory & Context Compaction
 
 ## License
 
