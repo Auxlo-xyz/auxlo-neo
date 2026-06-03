@@ -22,4 +22,7 @@ Thumbs.db
 .env.production
 
 # Wrangler (contains account-specific KV IDs)
-wrangler
+wrangler.toml
+
+# Agent context (contains local secrets, deploy info)
+AGENTS.md
