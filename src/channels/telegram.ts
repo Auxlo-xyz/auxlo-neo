@@ -1,28 +1,61 @@
-import type { Env, AgentRequest } from "../types";
+import type { Env, AgentRequest, CustomProviderConfig } from "../types";
 import { agentChat } from "../agent";
 import { listProviders } from "../providers";
 
-interface TelegramUpdate {
-  update_id: number;
-  message?: {
-    message_id: number;
-    from: { id: number; first_name: string; username?: string };
-    chat: { id: number; type: string };
-    text?: string;
-  };
+// ---- Telegram types ----
+
+interface TelegramUser {
+  id: number;
+  first_name: string;
+  username?: string;
 }
 
-// Telegram Bot API commands for the menu
+interface TelegramMessage {
+  message_id: number;
+  from: TelegramUser;
+  chat: { id: number; type: string };
+  text?: string;
+}
+
+interface TelegramCallbackQuery {
+  id: string;
+  from: TelegramUser;
+  message?: TelegramMessage;
+  data?: string;
+}
+
+interface TelegramUpdate {
+  update_id: number;
+  message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
+}
+
+// ---- Endpoint wizard state (stored in CONFIG KV) ----
+
+interface EndpointWizardState {
+  step: "type" | "base_url" | "model" | "api_key" | "confirm";
+  type?: "openai" | "anthropic";
+  base_url?: string;
+  model?: string;
+  api_key?: string;
+  started_at: number;
+}
+
+// ---- Bot commands for menu ----
+
 const BOT_COMMANDS = [
   { command: "start", description: "Welcome message" },
   { command: "help", description: "Show all commands" },
   { command: "reset", description: "Clear conversation history" },
-  { command: "model", description: "Set model (e.g. /model gpt-4o)" },
-  { command: "provider", description: "Switch provider (e.g. /provider groq)" },
-  { command: "persona", description: "Set system prompt (e.g. /persona You are a pirate)" },
+  { command: "model", description: "Switch AI model" },
+  { command: "provider", description: "Switch provider" },
+  { command: "endpoint", description: "Add custom API endpoint" },
+  { command: "persona", description: "Set system prompt" },
   { command: "status", description: "Show current session info" },
-  { command: "commands", description: "List available commands" },
+  { command: "endpoints", description: "List saved endpoints" },
 ];
+
+// ---- Helpers ----
 
 function parseCommand(text: string): { command: string; args: string } | null {
   const match = text.match(/^\/(\w+)(?:\s+(.*))?$/);
@@ -30,10 +63,18 @@ function parseCommand(text: string): { command: string; args: string } | null {
   return { command: match[1].toLowerCase(), args: match[2]?.trim() || "" };
 }
 
-async function sendTelegramMessage(env: Env, chatId: number, text: string): Promise<void> {
+async function tgApi(env: Env, method: string, body: Record<string, unknown>): Promise<any> {
   const token = env.TELEGRAM_BOT_TOKEN;
-  if (!token) return;
+  if (!token) return null;
+  const resp = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return resp.json();
+}
 
+async function sendText(env: Env, chatId: number, text: string, replyMarkup?: Record<string, unknown>): Promise<void> {
   const chunks: string[] = [];
   if (text.length <= 4000) {
     chunks.push(text);
@@ -44,124 +85,382 @@ async function sendTelegramMessage(env: Env, chatId: number, text: string): Prom
       remaining = remaining.slice(4000);
     }
   }
-
   for (const chunk of chunks) {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: chunk }),
-    });
+    const body: Record<string, unknown> = { chat_id: chatId, text: chunk };
+    if (replyMarkup && chunk === chunks[chunks.length - 1]) {
+      body.reply_markup = replyMarkup;
+    }
+    await tgApi(env, "sendMessage", body);
   }
 }
 
-export async function handleTelegramWebhook(
-  request: Request,
-  env: Env,
-  ctx: ExecutionContext
-): Promise<Response> {
-  const update: TelegramUpdate = await request.json();
-  if (!update.message?.text) return new Response("OK");
+async function editText(env: Env, chatId: number, messageId: number, text: string, replyMarkup?: Record<string, unknown>): Promise<void> {
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+  };
+  if (replyMarkup) body.reply_markup = replyMarkup;
+  await tgApi(env, "editMessageText", body);
+}
 
-  const msg = update.message!;
-  const chatId = msg!.chat.id;
-  const userId = msg!.from.id.toString();
-  const text = msg!.text!;
+async function answerCallback(env: Env, callbackId: string, text?: string): Promise<void> {
+  const body: Record<string, unknown> = { callback_query_id: callbackId };
+  if (text) body.text = text;
+  await tgApi(env, "answerCallbackQuery", body);
+}
+
+// ---- Endpoint wizard state management ----
+
+async function getWizardState(env: Env, userId: string): Promise<EndpointWizardState | null> {
+  const raw = await env.CONFIG.get(`wizard:${userId}`, "json");
+  return raw as EndpointWizardState | null;
+}
+
+async function setWizardState(env: Env, userId: string, state: EndpointWizardState): Promise<void> {
+  // Expire after 10 minutes
+  await env.CONFIG.put(`wizard:${userId}`, JSON.stringify(state), { expirationTtl: 600 });
+}
+
+async function clearWizardState(env: Env, userId: string): Promise<void> {
+  await env.CONFIG.delete(`wizard:${userId}`);
+}
+
+// ---- Keyboard builders ----
+
+function providerKeyboard(providers: { id: string; name: string; model: string; type: string }[]): Record<string, unknown> {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < providers.length; i += 2) {
+    const row: Array<{ text: string; callback_data: string }> = [];
+    row.push({ text: `${providers[i].id} (${providers[i].model})`, callback_data: `set_provider:${providers[i].id}` });
+    if (providers[i + 1]) {
+      row.push({ text: `${providers[i + 1].id} (${providers[i + 1].model})`, callback_data: `set_provider:${providers[i + 1].id}` });
+    }
+    rows.push(row);
+  }
+  return { inline_keyboard: rows };
+}
+
+function modelKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "GPT-4o", callback_data: "set_model:gpt-4o" }, { text: "GPT-4o Mini", callback_data: "set_model:gpt-4o-mini" }],
+      [{ text: "Claude Sonnet", callback_data: "set_model:claude-sonnet-4-20250514" }, { text: "Claude Haiku", callback_data: "set_model:claude-3-5-haiku-20241022" }],
+      [{ text: "Gemini Flash", callback_data: "set_model:gemini-2.0-flash" }, { text: "Gemini Pro", callback_data: "set_model:gemini-2.5-pro-preview-05-06" }],
+      [{ text: "Llama 3.3 70B", callback_data: "set_model:llama-3.3-70b-versatile" }, { text: "DeepSeek Chat", callback_data: "set_model:deepseek-chat" }],
+      [{ text: "DeepSeek R1", callback_data: "set_model:deepseek-reasoner" }, { text: "Qwen 3 235B", callback_data: "set_model:qwen/qwen3-235b-a22b" }],
+    ],
+  };
+}
+
+function endpointTypeKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "OpenAI-Compatible", callback_data: "endpoint_type:openai" }, { text: "Anthropic", callback_data: "endpoint_type:anthropic" }],
+      [{ text: "Cancel", callback_data: "endpoint_cancel" }],
+    ],
+  };
+}
+
+function confirmKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "Save Endpoint", callback_data: "endpoint_save" }, { text: "Cancel", callback_data: "endpoint_cancel" }],
+    ],
+  };
+}
+
+function cancelKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [[{ text: "Cancel", callback_data: "endpoint_cancel" }]],
+  };
+}
+
+// ---- Callback query handler ----
+
+async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: ExecutionContext): Promise<void> {
+  const data = cb.data || "";
+  const userId = cb.from.id.toString();
+  const chatId = cb.message?.chat.id;
+  const messageId = cb.message?.message_id;
+
+  if (!chatId) return;
+
+  // ---- Provider selection ----
+  if (data.startsWith("set_provider:")) {
+    const providerId = data.split(":")[1];
+    const sessionId = `telegram:${chatId}`;
+    const { getSession, saveSession } = await import("../memory");
+    const session = await getSession(env.SESSIONS, sessionId);
+    if (session) {
+      session.provider = providerId;
+      session.model = undefined; // Reset model when switching provider
+      await saveSession(env.SESSIONS, sessionId, session);
+    }
+    await answerCallback(env, cb.id, `Provider: ${providerId}`);
+    if (messageId) {
+      await editText(env, chatId, messageId, `Provider set to *${providerId}*. Model will use the provider's default.`);
+    }
+    return;
+  }
+
+  // ---- Model selection ----
+  if (data.startsWith("set_model:")) {
+    const modelId = data.split(":")[1];
+    const sessionId = `telegram:${chatId}`;
+    const { getSession, saveSession } = await import("../memory");
+    const session = await getSession(env.SESSIONS, sessionId);
+    if (session) {
+      session.model = modelId;
+      await saveSession(env.SESSIONS, sessionId, session);
+    }
+    await answerCallback(env, cb.id, `Model: ${modelId}`);
+    if (messageId) {
+      await editText(env, chatId, messageId, `Model set to *${modelId}*.`);
+    }
+    return;
+  }
+
+  // ---- Endpoint wizard: type selection ----
+  if (data.startsWith("endpoint_type:")) {
+    const epType = data.split(":")[1] as "openai" | "anthropic";
+    await setWizardState(env, userId, { step: "base_url", type: epType, started_at: Date.now() });
+    await answerCallback(env, cb.id);
+    const typeName = epType === "anthropic" ? "Anthropic" : "OpenAI-Compatible";
+    await sendText(env, chatId, `Adding *${typeName}* endpoint.\n\nSend the base URL.\nExamples:\n- OpenAI: \`https://api.openai.com/v1\`\n- Custom: \`https://api.example.com/v1\`\n- OpenRouter: \`https://openrouter.ai/api/v1\``, cancelKeyboard());
+    return;
+  }
+
+  // ---- Endpoint wizard: save ----
+  if (data === "endpoint_save") {
+    const wizard = await getWizardState(env, userId);
+    if (!wizard || !wizard.type || !wizard.base_url || !wizard.model || !wizard.api_key) {
+      await answerCallback(env, cb.id, "Incomplete data");
+      return;
+    }
+
+    const id = wizard.base_url.replace(/https?:\/\//, "").replace(/[^a-z0-9]/gi, "-").replace(/-+$/, "").toLowerCase().slice(0, 30);
+    const config: CustomProviderConfig = {
+      id,
+      name: wizard.base_url.replace(/https?:\/\//, "").split("/")[0],
+      base_url: wizard.base_url,
+      api_key: wizard.api_key,
+      default_model: wizard.model,
+      type: wizard.type,
+    };
+
+    // Save to custom_providers array
+    const raw = await env.CONFIG.get("custom_providers", "json");
+    const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
+    const idx = customs.findIndex((c) => c.id === config.id);
+    if (idx >= 0) customs[idx] = config;
+    else customs.push(config);
+    await env.CONFIG.put("custom_providers", JSON.stringify(customs));
+
+    // Also save individual key
+    await env.CONFIG.put(`custom_provider:${config.id}`, JSON.stringify(config));
+
+    await clearWizardState(env, userId);
+    await answerCallback(env, cb.id, "Saved!");
+    if (messageId) {
+      await editText(env, chatId, messageId,
+        `Endpoint saved.\n\n` +
+        `ID: \`${config.id}\`\n` +
+        `Type: ${config.type}\n` +
+        `URL: ${config.base_url}\n` +
+        `Model: ${config.default_model}\n\n` +
+        `Use /provider to switch to it.`
+      );
+    }
+    return;
+  }
+
+  // ---- Endpoint wizard: cancel ----
+  if (data === "endpoint_cancel") {
+    await clearWizardState(env, userId);
+    await answerCallback(env, cb.id, "Cancelled");
+    if (messageId) {
+      await editText(env, chatId, messageId, "Cancelled.");
+    }
+    return;
+  }
+
+  // ---- Delete endpoint ----
+  if (data.startsWith("del_endpoint:")) {
+    const endpointId = data.split(":")[1];
+    const raw = await env.CONFIG.get("custom_providers", "json");
+    const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
+    const filtered = customs.filter((c) => c.id !== endpointId);
+    await env.CONFIG.put("custom_providers", JSON.stringify(filtered));
+    await env.CONFIG.delete(`custom_provider:${endpointId}`);
+    await answerCallback(env, cb.id, "Deleted");
+    if (messageId) {
+      await editText(env, chatId, messageId, `Endpoint \`${endpointId}\` deleted.`);
+    }
+    return;
+  }
+
+  await answerCallback(env, cb.id);
+}
+
+// ---- Message handler (commands + wizard text input) ----
+
+async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionContext): Promise<void> {
+  if (!msg.text) return;
+
+  const chatId = msg.chat.id;
+  const userId = msg.from.id.toString();
+  const text = msg.text;
   const sessionId = `telegram:${chatId}`;
 
+  // ---- Check if user is in endpoint wizard ----
+  const wizard = await getWizardState(env, userId);
+  if (wizard && wizard.step !== "type" && wizard.step !== "confirm") {
+    // Cancel on /cancel
+    if (text === "/cancel" || text === "/endpoint") {
+      await clearWizardState(env, userId);
+      await sendText(env, chatId, "Cancelled.");
+      return;
+    }
+
+    switch (wizard.step) {
+      case "base_url": {
+        let url = text.trim();
+        if (!url.startsWith("http")) url = `https://${url}`;
+        wizard.base_url = url;
+        wizard.step = "model";
+        await setWizardState(env, userId, wizard);
+        await sendText(env, chatId, `Base URL: \`${url}\`\n\nNow send the model ID.\nExamples:\n- \`gpt-4o\`\n- \`claude-sonnet-4-20250514\`\n- \`my-custom-model\``, cancelKeyboard());
+        return;
+      }
+      case "model": {
+        wizard.model = text.trim();
+        wizard.step = "api_key";
+        await setWizardState(env, userId, wizard);
+        await sendText(env, chatId, `Model: \`${wizard.model}\`\n\nNow send the API key.`, cancelKeyboard());
+        return;
+      }
+      case "api_key": {
+        wizard.api_key = text.trim();
+        wizard.step = "confirm";
+        await setWizardState(env, userId, wizard);
+        await sendText(env, chatId,
+          `Confirm endpoint:\n\n` +
+          `Type: ${wizard.type === "anthropic" ? "Anthropic" : "OpenAI-Compatible"}\n` +
+          `URL: \`${wizard.base_url}\`\n` +
+          `Model: \`${wizard.model}\`\n` +
+          `Key: \`${wizard.api_key!.slice(0, 8)}...${wizard.api_key!.slice(-4)}\``,
+          confirmKeyboard()
+        );
+        return;
+      }
+    }
+    return;
+  }
+
+  // ---- Parse and handle commands ----
   const cmd = parseCommand(text);
   if (cmd) {
     switch (cmd.command) {
       case "start":
-        await sendTelegramMessage(
-          env,
-          chatId,
-          "Welcome to AuxloNeo! I'm your edge-native AI assistant.\n\n" +
-            "Send me any message and I'll respond. Use /help to see all commands."
+        await sendText(env, chatId,
+          "Welcome to AuxloNeo. Your edge-native AI assistant.\n\n" +
+          "Send any message and I'll respond. Use /help to see commands."
         );
-        return new Response("OK");
+        return;
 
       case "reset":
         await env.SESSIONS.delete(`session:${sessionId}`);
-        await sendTelegramMessage(env, chatId, "Session cleared. Fresh start.");
-        return new Response("OK");
+        await sendText(env, chatId, "Session cleared.");
+        return;
 
       case "model":
         if (cmd.args) {
-          // Store model override in session
           const session = await (await import("../memory")).getSession(env.SESSIONS, sessionId);
           if (session) {
             session.model = cmd.args;
             await (await import("../memory")).saveSession(env.SESSIONS, sessionId, session);
           }
-          await sendTelegramMessage(env, chatId, `Model set to: ${cmd.args}`);
+          await sendText(env, chatId, `Model set to: ${cmd.args}`);
         } else {
-          await sendTelegramMessage(
-            env,
-            chatId,
-            "Usage: /model <model-name>\nExamples:\n  /model gpt-4o\n  /model claude-sonnet-4-20250514\n  /model gemini-2.0-flash\n  /model deepseek-chat"
-          );
+          await sendText(env, chatId, "Choose a model:", modelKeyboard());
         }
-        return new Response("OK");
+        return;
 
       case "provider":
         if (cmd.args) {
           const session = await (await import("../memory")).getSession(env.SESSIONS, sessionId);
           if (session) {
             session.provider = cmd.args;
+            session.model = undefined;
             await (await import("../memory")).saveSession(env.SESSIONS, sessionId, session);
           }
-          await sendTelegramMessage(env, chatId, `Provider set to: ${cmd.args}`);
+          await sendText(env, chatId, `Provider set to: ${cmd.args}`);
         } else {
           const providers = await listProviders(env);
-          const lines = providers.map((p) => `  ${p.id} - ${p.model} (${p.type})`);
-          await sendTelegramMessage(
-            env,
-            chatId,
-            "Usage: /provider <id>\n\nAvailable providers:\n" + lines.join("\n")
-          );
+          await sendText(env, chatId, "Choose a provider:", providerKeyboard(providers));
         }
-        return new Response("OK");
+        return;
+
+      case "endpoint":
+        await setWizardState(env, userId, { step: "type", started_at: Date.now() });
+        await sendText(env, chatId, "Add a custom API endpoint.\n\nChoose the endpoint type:", endpointTypeKeyboard());
+        return;
+
+      case "endpoints": {
+        const raw = await env.CONFIG.get("custom_providers", "json");
+        const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
+        if (customs.length === 0) {
+          await sendText(env, chatId, "No custom endpoints saved. Use /endpoint to add one.");
+          return;
+        }
+        const lines = customs.map((c) => `- \`${c.id}\` | ${c.type} | ${c.base_url} | ${c.default_model}`);
+        const rows = customs.map((c) => [{ text: `Delete ${c.id}`, callback_data: `del_endpoint:${c.id}` }]);
+        await sendText(env, chatId, "Saved endpoints:\n\n" + lines.join("\n"), { inline_keyboard: rows });
+        return;
+      }
 
       case "persona":
         if (cmd.args) {
           await env.CONFIG.put(`persona:${sessionId}`, cmd.args);
-          await sendTelegramMessage(env, chatId, "Persona updated. I'll use that for new conversations.");
+          await sendText(env, chatId, "Persona updated.");
         } else {
           const current = (await env.CONFIG.get(`persona:${sessionId}`)) || env.DEFAULT_SYSTEM_PROMPT || "default";
-          await sendTelegramMessage(
-            env,
-            chatId,
-            `Current persona: ${current}\n\nUsage: /persona <prompt>\nExample: /persona You are a senior Rust engineer. Be concise.`
-          );
+          await sendText(env, chatId, `Current persona:\n${current}\n\nUsage: /persona <prompt>`);
         }
-        return new Response("OK");
+        return;
 
-      case "status":
+      case "status": {
         const session = await (await import("../memory")).getSession(env.SESSIONS, sessionId);
         const msgCount = session?.messages?.length || 0;
         const provider = session?.provider || env.DEFAULT_PROVIDER || "openai";
         const model = session?.model || env.DEFAULT_MODEL || "(provider default)";
         const persona = (await env.CONFIG.get(`persona:${sessionId}`)) || env.DEFAULT_SYSTEM_PROMPT || "default";
-        await sendTelegramMessage(
-          env,
-          chatId,
-          `AuxloNeo Status\n` +
-            `Provider: ${provider}\n` +
-            `Model: ${model}\n` +
-            `Messages in session: ${msgCount}\n` +
-            `Persona: ${persona.slice(0, 100)}${persona.length > 100 ? "..." : ""}`
+        await sendText(env, chatId,
+          `Status\n\n` +
+          `Provider: ${provider}\n` +
+          `Model: ${model}\n` +
+          `Messages: ${msgCount}\n` +
+          `Persona: ${persona.slice(0, 100)}${persona.length > 100 ? "..." : ""}`
         );
-        return new Response("OK");
+        return;
+      }
 
       case "commands":
-      case "help":
+      case "help": {
         const helpLines = BOT_COMMANDS.map((c) => `/${c.command} - ${c.description}`);
-        await sendTelegramMessage(env, chatId, "AuxloNeo Commands:\n" + helpLines.join("\n"));
-        return new Response("OK");
+        await sendText(env, chatId, "Commands:\n" + helpLines.join("\n"));
+        return;
+      }
+
+      case "cancel":
+        await clearWizardState(env, userId);
+        await sendText(env, chatId, "Cancelled.");
+        return;
     }
   }
 
-  // Not a command -- send to agent
+  // ---- Not a command -- send to agent ----
   const req: AgentRequest = {
     message: text,
     session_id: sessionId,
@@ -169,47 +468,48 @@ export async function handleTelegramWebhook(
 
   ctx.waitUntil(
     agentChat(env, req)
-      .then((res) => sendTelegramMessage(env, chatId, res.content))
-      .catch((err) => sendTelegramMessage(env, chatId, `Error: ${err.message}`))
+      .then((res) => sendText(env, chatId, res.content))
+      .catch((err) => sendText(env, chatId, `Error: ${err.message}`))
   );
+}
+
+// ---- Webhook entry point ----
+
+export async function handleTelegramWebhook(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
+  const update: TelegramUpdate = await request.json();
+
+  if (update.callback_query) {
+    ctx.waitUntil(handleCallbackQuery(env, update.callback_query, ctx));
+    return new Response("OK");
+  }
+
+  if (update.message) {
+    ctx.waitUntil(handleMessage(env, update.message, ctx));
+    return new Response("OK");
+  }
 
   return new Response("OK");
 }
 
-// Register slash commands with Telegram (call once on deploy)
+// ---- Setup functions ----
+
 export async function registerTelegramCommands(env: Env): Promise<string> {
-  const token = env.TELEGRAM_BOT_TOKEN;
-  if (!token) return "TELEGRAM_BOT_TOKEN not set";
-
-  const resp = await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commands: BOT_COMMANDS }),
-  });
-
-  const data = await resp.json();
-  return JSON.stringify(data);
+  const result = await tgApi(env, "setMyCommands", { commands: BOT_COMMANDS });
+  return JSON.stringify(result);
 }
 
 export async function setTelegramWebhook(env: Env, origin: string): Promise<string> {
-  const token = env.TELEGRAM_BOT_TOKEN;
-  if (!token) return "TELEGRAM_BOT_TOKEN not set";
-
-  const body: any = {
+  const body: Record<string, unknown> = {
     url: `${origin}/telegram`,
-    allowed_updates: ["message"],
+    allowed_updates: ["message", "callback_query"],
   };
-
   if (env.TELEGRAM_WEBHOOK_SECRET) {
     body.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
   }
-
-  const resp = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const data = await resp.json();
-  return JSON.stringify(data);
+  const result = await tgApi(env, "setWebhook", body);
+  return JSON.stringify(result);
 }
