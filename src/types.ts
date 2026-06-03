@@ -81,17 +81,6 @@ export interface AgentResponse {
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 }
 
-export interface ProviderConfig {
-  name: string;
-  keyEnv: keyof Env;
-  baseUrl: string;
-  defaultModel: string;
-  buildHeaders: (key: string) => Record<string, string>;
-  transformRequest?: (req: ProviderRequest, model: string) => unknown;
-  transformResponse?: (data: unknown) => ProviderResponse;
-  getEndpointUrl?: (model: string, apiKey: string) => string;
-}
-
 export interface ProviderRequest {
   messages: Message[];
   tools?: ToolDefinition[];
@@ -104,6 +93,26 @@ export interface ProviderResponse {
   content: string | null;
   toolCalls?: ToolCall[];
   model: string;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
   finishReason?: string;
+}
+
+export interface CustomProviderConfig {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  default_model: string;
+  type: "openai" | "anthropic" | "google";
+}
+
+export interface ProviderConfig {
+  name: string;
+  keyEnv: keyof Env;
+  baseUrl: string;
+  defaultModel: string;
+  buildHeaders: (key: string) => Record<string, string>;
+  transformRequest?: (req: ProviderRequest, model: string) => unknown;
+  transformResponse?: (data: any) => ProviderResponse;
+  getEndpointUrl?: (model: string, apiKey: string) => string;
 }

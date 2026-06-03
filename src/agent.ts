@@ -13,20 +13,30 @@ Be direct. Don't apologize unnecessarily or add filler. Give substantive answers
 
 export async function agentChat(env: Env, req: AgentRequest): Promise<AgentResponse> {
   const sessionId = req.session_id || "default";
-  const providerName = req.provider || env.DEFAULT_PROVIDER || "openai";
-  const model = req.model || env.DEFAULT_MODEL || undefined;
 
   let session = await getSession(env.SESSIONS, sessionId);
   if (!session) {
     session = createSession(sessionId);
   }
 
+  // Resolve provider/model: request > session > env default
+  const providerName = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
+  const model = req.model || session.model || env.DEFAULT_MODEL || undefined;
+
+  // Add user message
   const userMessage: Message = { role: "user", content: req.message };
   addMessage(session, userMessage);
 
+  // Load memory context
   const memoryContext = await getMemory(env.MEMORY, sessionId);
 
-  const systemPrompt = env.DEFAULT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
+  // Load persona: per-session (from /persona command) > env default
+  let systemPrompt = env.DEFAULT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
+  try {
+    const personaOverride = await env.CONFIG.get(`persona:${sessionId}`);
+    if (personaOverride) systemPrompt = personaOverride;
+  } catch { /* ignore */ }
+
   const fullSystem = memoryContext
     ? `${systemPrompt}\n\n---\nPrevious conversation context:\n${memoryContext}`
     : systemPrompt;
