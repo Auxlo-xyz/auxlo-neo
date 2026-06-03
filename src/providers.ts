@@ -17,7 +17,7 @@ export interface CustomProviderConfig {
   base_url: string;
   api_key: string;
   default_model: string;
-  provider_type: "openai_compatible" | "anthropic" | "google";
+  type: "openai" | "anthropic" | "google";
 }
 
 const BUILTIN: Record<string, ProviderConfig> = {
@@ -149,7 +149,7 @@ async function loadCustomProviders(env: Env): Promise<Record<string, ProviderCon
 }
 
 function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
-  if (cp.provider_type === "anthropic") {
+  if (cp.type === "anthropic") {
     return {
       name: cp.id,
       keyEnv: "__custom__" as any,
@@ -164,7 +164,7 @@ function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
       transformResponse: BUILTIN.anthropic.transformResponse,
     };
   }
-  if (cp.provider_type === "google") {
+  if (cp.type === "google") {
     return {
       name: cp.id,
       keyEnv: "__custom__" as any,
