@@ -20,7 +20,7 @@ export interface CustomProviderConfig {
   type: "openai" | "anthropic" | "google";
 }
 
-const BUILTIN: Record<string, ProviderConfig> = {
+export const BUILTIN: Record<string, ProviderConfig> = {
   openai: {
     name: "openai",
     keyEnv: "OPENAI_API_KEY",
@@ -137,7 +137,7 @@ const BUILTIN: Record<string, ProviderConfig> = {
 };
 
 // Load custom providers from KV and convert to ProviderConfig
-async function loadCustomProviders(env: Env): Promise<Record<string, ProviderConfig>> {
+export async function loadCustomProviders(env: Env): Promise<Record<string, ProviderConfig>> {
   const raw = await env.CONFIG.get("custom_providers", "json");
   if (!raw) return {};
   const customs = raw as CustomProviderConfig[];
@@ -151,7 +151,7 @@ async function loadCustomProviders(env: Env): Promise<Record<string, ProviderCon
 function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
   if (cp.type === "anthropic") {
     return {
-      name: cp.id,
+      name: cp.name,
       keyEnv: "__custom__" as any,
       baseUrl: cp.base_url,
       defaultModel: cp.default_model,
@@ -166,7 +166,7 @@ function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
   }
   if (cp.type === "google") {
     return {
-      name: cp.id,
+      name: cp.name,
       keyEnv: "__custom__" as any,
       baseUrl: cp.base_url,
       defaultModel: cp.default_model,
@@ -178,7 +178,7 @@ function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
   }
   // openai_compatible (default)
   return {
-    name: cp.id,
+    name: cp.name,
     keyEnv: "__custom__" as any,
     baseUrl: cp.base_url,
     defaultModel: cp.default_model,

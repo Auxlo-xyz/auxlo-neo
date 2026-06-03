@@ -4,6 +4,7 @@ import { getToolDefinitions, executeTool } from "./tools";
 import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage } from "./memory";
 import { compactMessages } from "./compression";
 import { MAX_HISTORY_LIMIT } from "./types";
+import { BUILTIN, loadCustomProviders } from "./providers";
 
 const MAX_TOOL_ROUNDS = 8;
 
@@ -41,18 +42,27 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   }
 
   // Resolve provider/model: request > session > env default > first custom provider > "openai"
-  let providerName = req.provider || session.provider || env.DEFAULT_PROVIDER || "";
-  const model = req.model || session.model || env.DEFAULT_MODEL || undefined;
+  let providerId = req.provider || session.provider || env.DEFAULT_PROVIDER || "";
 
   // If no provider resolved, try custom providers in KV, then fall back to "openai"
-  if (!providerName) {
+  if (!providerId) {
     try {
       const raw = await env.CONFIG.get("custom_providers", "json");
       const customs: { id: string }[] = (raw as { id: string }[]) || [];
-      if (customs.length > 0) providerName = customs[0].id;
+      if (customs.length > 0) providerId = customs[0].id;
     } catch { /* ignore */ }
-    if (!providerName) providerName = "openai";
+    if (!providerId) providerId = "openai";
   }
+
+  // Resolve actual provider config to get name and default model
+  let providerConfig: any = BUILTIN[providerId];
+  if (!providerConfig) {
+    const customs = await loadCustomProviders(env);
+    providerConfig = customs[providerId];
+  }
+
+  const providerDisplayName = providerConfig?.name || providerId;
+  const model = req.model || session.model || env.DEFAULT_MODEL || providerConfig?.defaultModel || "gpt-4o-mini";
 
   // Extract channel context from session ID
   const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
@@ -76,7 +86,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     ? `${systemPrompt}\n\n---\nThings you remember about this user:\n${memoryContext}`
     : systemPrompt;
 
-  const finalSystemPrompt = `${fullSystem}\n\nCurrently running on model: ${model || "default"} via ${providerName}.`;
+  const finalSystemPrompt = `${fullSystem}\n\nCurrently running on model: ${model} via ${providerDisplayName}.`;
 
   const messages: Message[] = [
     { role: "system", content: finalSystemPrompt },
@@ -99,7 +109,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
       temperature: req.temperature,
     };
 
-    const result = await callProvider(env, providerName, providerReq);
+    const result = await callProvider(env, providerId, providerReq);
 
     finalModel = result.model;
     usage = result.usage;
@@ -157,7 +167,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
 
   // Track usage
   if (usage) {
-    await trackUsage(env.MEMORY, sessionId, usage, finalModel, providerName).catch(() => {});
+    await trackUsage(env.MEMORY, sessionId, usage, finalModel, providerId).catch(() => {});
   }
 
   return {
