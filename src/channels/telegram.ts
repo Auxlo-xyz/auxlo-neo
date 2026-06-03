@@ -484,6 +484,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         const persona = (await env.CONFIG.get(`persona:${sessionId}`)) || env.DEFAULT_SYSTEM_PROMPT || "default";
         await sendText(env, chatId,
           `*AuxloNeo Status*\n` +
+          `Runtime: Cloudflare Workers\n` +
           `Provider: \`${provider}\`\n` +
           `Model: \`${model}\`\n` +
           `Messages: ${msgCount}\n` +

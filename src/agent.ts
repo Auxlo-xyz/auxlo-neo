@@ -5,7 +5,7 @@ import { getSession, saveSession, createSession, addMessage, getMemory, trackUsa
 
 const MAX_TOOL_ROUNDS = 8;
 
-const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a fast, capable AI assistant running on the edge. You are concise, direct, and helpful.
+const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a fast, capable AI assistant running on Cloudflare Workers. You are concise, direct, and helpful.
 
 You have access to tools. Use them proactively:
 - web_search: Use when you need current information, facts, news, or anything beyond your training data. Don't guess -- search.
