@@ -13,3 +13,6 @@ id = "ed1a3572eaa04ab08ae601f08e5d6801"
 [[kv_namespaces]]
 binding = "CONFIG"
 id = "60a8e92dca8c4dd28a5246a165c4280a"
+
+[vars]
+EXECUTOR_URL = "https://auxlo-muscle.vercel.app/exec"
