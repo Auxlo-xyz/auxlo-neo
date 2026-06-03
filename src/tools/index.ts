@@ -460,7 +460,7 @@ async function toolRemoteExec(env: Env, command: string, workspaceId?: string): 
       body: JSON.stringify({
         command,
         workspace_id: workspaceId,
-        api_key: env.API_KEY, // Pass API key for authentication if needed
+        api_key: env.MUSCLE_API_KEY, // Use the specific Muscle API Key for authentication
       }),
     });
 
