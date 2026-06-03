@@ -7,7 +7,12 @@ const MAX_TOOL_ROUNDS = 8;
 
 const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a fast, capable AI assistant running on the edge. You are concise, direct, and helpful.
 
-You have access to tools -- use them when they can help answer a question better than your training data. Prefer web_search for current information and web_fetch to read specific pages.
+You have access to tools. Use them proactively:
+- web_search: Use when you need current information, facts, news, or anything beyond your training data. Don't guess -- search.
+- web_fetch: Use to read a specific URL, article, or documentation page.
+- send_message: Use to send progress updates during long multi-step tasks. The user sees this as a separate message before your final reply. Use it to keep them informed: "Searching...", "Found X, now checking Y...", etc.
+- remember: Use to save important information the user tells you. Names, preferences, project details, instructions. These persist across conversations.
+- recall: Use to check your memory before asking the user to repeat themselves.
 
 Be direct. Don't apologize unnecessarily or add filler. Give substantive answers.`;
 
@@ -22,6 +27,10 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   // Resolve provider/model: request > session > env default
   const providerName = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
   const model = req.model || session.model || env.DEFAULT_MODEL || undefined;
+
+  // Extract channel context from session ID
+  const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
+  const toolCtx = { channel, sessionId };
 
   // Add user message
   const userMessage: Message = { role: "user", content: req.message };
@@ -38,7 +47,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   } catch { /* ignore */ }
 
   const fullSystem = memoryContext
-    ? `${systemPrompt}\n\n---\nPrevious conversation context:\n${memoryContext}`
+    ? `${systemPrompt}\n\n---\nThings you remember about this user:\n${memoryContext}`
     : systemPrompt;
 
   const messages: Message[] = [
@@ -46,7 +55,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     ...session.messages,
   ];
 
-  const toolDefs = getToolDefinitions(env);
+  const toolDefs = getToolDefinitions(env, toolCtx);
 
   let round = 0;
   let finalContent = "";
@@ -88,7 +97,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
           toolArgs = {};
         }
 
-        const toolResult = await executeTool(env, toolName, toolArgs);
+        const toolResult = await executeTool(env, toolName, toolArgs, toolCtx);
 
         const toolMsg: Message = {
           role: "tool",
