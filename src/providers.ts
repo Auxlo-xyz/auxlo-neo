@@ -259,9 +259,9 @@ export async function callProvider(env: Env, providerName: string, req: Provider
   if (config.getEndpointUrl) {
     url = config.getEndpointUrl(model, apiKey);
   } else if (config.name === "anthropic") {
-    url = `${config.baseUrl}/v1/messages`;
+    url = `${config.baseUrl.replace(/\/+$/,"")}/v1/messages`;
   } else {
-    url = `${config.baseUrl}/chat/completions`;
+    url = `${config.baseUrl.replace(/\/+$/,"")}/chat/completions`;
   }
 
   headers = config.buildHeaders(apiKey);
