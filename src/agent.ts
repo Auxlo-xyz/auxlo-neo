@@ -2,6 +2,8 @@ import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest } from 
 import { callProvider } from "./providers";
 import { getToolDefinitions, executeTool } from "./tools";
 import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage } from "./memory";
+import { compactMessages } from "./compression";
+import { MAX_HISTORY_LIMIT } from "./types";
 
 const MAX_TOOL_ROUNDS = 8;
 
@@ -23,6 +25,15 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   let session = await getSession(env.SESSIONS, sessionId);
   if (!session) {
     session = createSession(sessionId);
+  }
+
+  // Handle session compaction if history is too long
+  if (session.messages.length > MAX_HISTORY_LIMIT) {
+    let providerName = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
+    const model = req.model || session.model || env.DEFAULT_MODEL || undefined;
+    
+    session.messages = await compactMessages(env, session.messages, providerName, model || "gpt-4o-mini");
+    await saveSession(env.SESSIONS, sessionId, session);
   }
 
   // Resolve provider/model: request > session > env default > first custom provider > "openai"

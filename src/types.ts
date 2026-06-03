@@ -116,3 +116,6 @@ export interface ProviderConfig {
   transformResponse?: (data: any) => ProviderResponse;
   getEndpointUrl?: (model: string, apiKey: string) => string;
 }
+
+export const MAX_HISTORY_LIMIT = 50;
+export const ACTIVE_WINDOW_SIZE = 20;
