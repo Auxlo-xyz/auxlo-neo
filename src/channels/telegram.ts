@@ -141,16 +141,18 @@ function providerKeyboard(providers: { id: string; name: string; model: string; 
   return { inline_keyboard: rows };
 }
 
-function modelKeyboard(): Record<string, unknown> {
-  return {
-    inline_keyboard: [
-      [{ text: "GPT-4o", callback_data: "set_model:gpt-4o" }, { text: "GPT-4o Mini", callback_data: "set_model:gpt-4o-mini" }],
-      [{ text: "Claude Sonnet", callback_data: "set_model:claude-sonnet-4-20250514" }, { text: "Claude Haiku", callback_data: "set_model:claude-3-5-haiku-20241022" }],
-      [{ text: "Gemini Flash", callback_data: "set_model:gemini-2.0-flash" }, { text: "Gemini Pro", callback_data: "set_model:gemini-2.5-pro-preview-05-06" }],
-      [{ text: "Llama 3.3 70B", callback_data: "set_model:llama-3.3-70b-versatile" }, { text: "DeepSeek Chat", callback_data: "set_model:deepseek-chat" }],
-      [{ text: "DeepSeek R1", callback_data: "set_model:deepseek-reasoner" }, { text: "Qwen 3 235B", callback_data: "set_model:qwen/qwen3-235b-a22b" }],
-    ],
-  };
+function modelKeyboard(customModels: string[] = []): Record<string, unknown> {
+  const defaultModels = [
+    [{ text: "GPT-4o", callback_data: "set_model:gpt-4o" }, { text: "GPT-4o Mini", callback_data: "set_model:gpt-4o-mini" }],
+    [{ text: "Claude Sonnet", callback_data: "set_model:claude-sonnet-4-20250514" }, { text: "Claude Haiku", callback_data: "set_model:claude-3-5-haiku-20241022" }],
+    [{ text: "Gemini Flash", callback_data: "set_model:gemini-2.0-flash" }, { text: "Gemini Pro", callback_data: "set_model:gemini-2.5-pro-preview-05-06" }],
+    [{ text: "Llama 3.3 70B", callback_data: "set_model:llama-3.3-70b-versatile" }, { text: "DeepSeek Chat", callback_data: "set_model:deepseek-chat" }],
+    [{ text: "DeepSeek R1", callback_data: "set_model:deepseek-reasoner" }, { text: "Qwen 3 235B", callback_data: "set_model:qwen/qwen3-235b-a22b" }],
+  ];
+  const customRows: Array<Array<{ text: string; callback_data: string }>> = customModels.map((m) => [
+    { text: `[Custom] ${m}`, callback_data: `set_model:${m}` },
+  ]);
+  return { inline_keyboard: [...customRows, ...defaultModels] };
 }
 
 function endpointTypeKeyboard(): Record<string, unknown> {
@@ -194,12 +196,20 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     const session = await getSession(env.SESSIONS, sessionId);
     if (session) {
       session.provider = providerId;
-      session.model = undefined; // Reset model when switching provider
+      // Auto-set custom provider's default model
+      const raw = await env.CONFIG.get("custom_providers", "json");
+      const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
+      const custom = customs.find((c) => c.id === providerId);
+      session.model = custom?.default_model;
       await saveSession(env.SESSIONS, sessionId, session);
     }
     await answerCallback(env, cb.id, `Provider: ${providerId}`);
     if (messageId) {
-      await editText(env, chatId, messageId, `Provider set to *${providerId}*. Model will use the provider's default.`);
+      const raw = await env.CONFIG.get("custom_providers", "json");
+      const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
+      const custom = customs.find((c) => c.id === providerId);
+      const modelNote = custom?.default_model ? `\nModel: ${custom.default_model}` : "";
+      await editText(env, chatId, messageId, `Provider set to *${providerId}*${modelNote}`);
     }
     return;
   }
@@ -383,7 +393,11 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           }
           await sendText(env, chatId, `Model set to: ${cmd.args}`);
         } else {
-          await sendText(env, chatId, "Choose a model:", modelKeyboard());
+          // Gather models from custom endpoints
+          const rawCustom = await env.CONFIG.get("custom_providers", "json");
+          const customs: CustomProviderConfig[] = (rawCustom as CustomProviderConfig[]) || [];
+          const customModels = customs.map((c) => c.default_model).filter((m) => m && m.length > 0);
+          await sendText(env, chatId, "Choose a model:", modelKeyboard(customModels));
         }
         return;
 
