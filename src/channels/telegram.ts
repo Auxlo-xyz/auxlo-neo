@@ -77,6 +77,10 @@ async function tgApi(env: Env, method: string, body: Record<string, unknown>): P
   return resp.json();
 }
 
+async function sendChatAction(env: Env, chatId: number, action: string): Promise<void> {
+  await tgApi(env, "sendChatAction", { chat_id: chatId, action });
+}
+
 async function sendText(env: Env, chatId: number, text: string, replyMarkup?: Record<string, unknown>): Promise<void> {
   const chunks: string[] = [];
   if (text.length <= 4000) {
@@ -526,9 +530,15 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   };
 
   ctx.waitUntil(
-    agentChat(env, agentReq)
-      .then((res) => sendText(env, chatId, res.content))
-      .catch((err) => sendText(env, chatId, `Error: ${err.message}`))
+    (async () => {
+      await sendChatAction(env, chatId, "typing");
+      try {
+        const res = await agentChat(env, agentReq);
+        await sendText(env, chatId, res.content);
+      } catch (err: any) {
+        await sendText(env, chatId, `Error: ${err.message}`);
+      }
+    })()
   );
 }
 
