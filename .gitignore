@@ -20,3 +20,6 @@ Thumbs.db
 .env
 .env.local
 .env.production
+
+# Wrangler (contains account-specific KV IDs)
+wrangler

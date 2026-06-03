@@ -1,0 +1,3 @@
+# KV namespaces -- create with: wrangler kv namespace create SESSIONS
+[[kv_namespaces]]
+binding
