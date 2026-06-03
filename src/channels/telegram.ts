@@ -118,7 +118,6 @@ async function getWizardState(env: Env, userId: string): Promise<EndpointWizardS
 }
 
 async function setWizardState(env: Env, userId: string, state: EndpointWizardState): Promise<void> {
-  // Expire after 10 minutes
   await env.CONFIG.put(`wizard:${userId}`, JSON.stringify(state), { expirationTtl: 600 });
 }
 
@@ -141,18 +140,28 @@ function providerKeyboard(providers: { id: string; name: string; model: string; 
   return { inline_keyboard: rows };
 }
 
-function modelKeyboard(customModels: string[] = []): Record<string, unknown> {
-  const defaultModels = [
+async function modelKeyboard(env: Env): Promise<Record<string, unknown>> {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [
     [{ text: "GPT-4o", callback_data: "set_model:gpt-4o" }, { text: "GPT-4o Mini", callback_data: "set_model:gpt-4o-mini" }],
     [{ text: "Claude Sonnet", callback_data: "set_model:claude-sonnet-4-20250514" }, { text: "Claude Haiku", callback_data: "set_model:claude-3-5-haiku-20241022" }],
     [{ text: "Gemini Flash", callback_data: "set_model:gemini-2.0-flash" }, { text: "Gemini Pro", callback_data: "set_model:gemini-2.5-pro-preview-05-06" }],
     [{ text: "Llama 3.3 70B", callback_data: "set_model:llama-3.3-70b-versatile" }, { text: "DeepSeek Chat", callback_data: "set_model:deepseek-chat" }],
     [{ text: "DeepSeek R1", callback_data: "set_model:deepseek-reasoner" }, { text: "Qwen 3 235B", callback_data: "set_model:qwen/qwen3-235b-a22b" }],
   ];
-  const customRows: Array<Array<{ text: string; callback_data: string }>> = customModels.map((m) => [
-    { text: `[Custom] ${m}`, callback_data: `set_model:${m}` },
-  ]);
-  return { inline_keyboard: [...customRows, ...defaultModels] };
+
+  // Add models from custom endpoints
+  const raw = await env.CONFIG.get("custom_providers", "json");
+  const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
+  const seen = new Set(rows.flat().map((b) => b.callback_data));
+  for (const cp of customs) {
+    const cbData = `set_model:${cp.default_model}`;
+    if (!seen.has(cbData)) {
+      seen.add(cbData);
+      rows.push([{ text: `${cp.name}: ${cp.default_model}`, callback_data: cbData }]);
+    }
+  }
+
+  return { inline_keyboard: rows };
 }
 
 function endpointTypeKeyboard(): Record<string, unknown> {
@@ -173,9 +182,7 @@ function confirmKeyboard(): Record<string, unknown> {
 }
 
 function cancelKeyboard(): Record<string, unknown> {
-  return {
-    inline_keyboard: [[{ text: "Cancel", callback_data: "endpoint_cancel" }]],
-  };
+  return { inline_keyboard: [[{ text: "Cancel", callback_data: "endpoint_cancel" }]] };
 }
 
 // ---- Callback query handler ----
@@ -192,23 +199,21 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
   if (data.startsWith("set_provider:")) {
     const providerId = data.split(":")[1];
     const sessionId = `telegram:${chatId}`;
-    const { getSession, saveSession } = await import("../memory");
-    const session = await getSession(env.SESSIONS, sessionId);
-    if (session) {
-      session.provider = providerId;
-      // Auto-set custom provider's default model
-      const raw = await env.CONFIG.get("custom_providers", "json");
-      const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
-      const custom = customs.find((c) => c.id === providerId);
-      session.model = custom?.default_model;
-      await saveSession(env.SESSIONS, sessionId, session);
+    const { getSession, saveSession, createSession } = await import("../memory");
+    let session = await getSession(env.SESSIONS, sessionId);
+    if (!session) {
+      session = createSession(sessionId);
     }
+    session.provider = providerId;
+    // Auto-set custom provider's default model
+    const rawP = await env.CONFIG.get("custom_providers", "json");
+    const customsP: CustomProviderConfig[] = (rawP as CustomProviderConfig[]) || [];
+    const customP = customsP.find((c) => c.id === providerId);
+    if (customP?.default_model) session.model = customP.default_model;
+    await saveSession(env.SESSIONS, sessionId, session);
     await answerCallback(env, cb.id, `Provider: ${providerId}`);
     if (messageId) {
-      const raw = await env.CONFIG.get("custom_providers", "json");
-      const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
-      const custom = customs.find((c) => c.id === providerId);
-      const modelNote = custom?.default_model ? `\nModel: ${custom.default_model}` : "";
+      const modelNote = customP?.default_model ? `\nModel: ${customP.default_model}` : "";
       await editText(env, chatId, messageId, `Provider set to *${providerId}*${modelNote}`);
     }
     return;
@@ -218,12 +223,13 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
   if (data.startsWith("set_model:")) {
     const modelId = data.split(":")[1];
     const sessionId = `telegram:${chatId}`;
-    const { getSession, saveSession } = await import("../memory");
-    const session = await getSession(env.SESSIONS, sessionId);
-    if (session) {
-      session.model = modelId;
-      await saveSession(env.SESSIONS, sessionId, session);
+    const { getSession, saveSession, createSession } = await import("../memory");
+    let session = await getSession(env.SESSIONS, sessionId);
+    if (!session) {
+      session = createSession(sessionId);
     }
+    session.model = modelId;
+    await saveSession(env.SESSIONS, sessionId, session);
     await answerCallback(env, cb.id, `Model: ${modelId}`);
     if (messageId) {
       await editText(env, chatId, messageId, `Model set to *${modelId}*.`);
@@ -277,8 +283,8 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
         `Endpoint saved.\n\n` +
         `ID: \`${config.id}\`\n` +
         `Type: ${config.type}\n` +
-        `URL: ${config.base_url}\n` +
-        `Model: ${config.default_model}\n\n` +
+        `URL: \`${config.base_url}\`\n` +
+        `Model: \`${config.default_model}\`\n\n` +
         `Use /provider to switch to it.`
       );
     }
@@ -386,29 +392,30 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
 
       case "model":
         if (cmd.args) {
-          const session = await (await import("../memory")).getSession(env.SESSIONS, sessionId);
-          if (session) {
-            session.model = cmd.args;
-            await (await import("../memory")).saveSession(env.SESSIONS, sessionId, session);
-          }
+          const { getSession, saveSession, createSession } = await import("../memory");
+          let session = await getSession(env.SESSIONS, sessionId);
+          if (!session) session = createSession(sessionId);
+          session.model = cmd.args;
+          await saveSession(env.SESSIONS, sessionId, session);
           await sendText(env, chatId, `Model set to: ${cmd.args}`);
         } else {
-          // Gather models from custom endpoints
-          const rawCustom = await env.CONFIG.get("custom_providers", "json");
-          const customs: CustomProviderConfig[] = (rawCustom as CustomProviderConfig[]) || [];
-          const customModels = customs.map((c) => c.default_model).filter((m) => m && m.length > 0);
-          await sendText(env, chatId, "Choose a model:", modelKeyboard(customModels));
+          const kb = await modelKeyboard(env);
+          await sendText(env, chatId, "Choose a model:", kb);
         }
         return;
 
       case "provider":
         if (cmd.args) {
-          const session = await (await import("../memory")).getSession(env.SESSIONS, sessionId);
-          if (session) {
-            session.provider = cmd.args;
-            session.model = undefined;
-            await (await import("../memory")).saveSession(env.SESSIONS, sessionId, session);
-          }
+          const { getSession, saveSession, createSession } = await import("../memory");
+          let session = await getSession(env.SESSIONS, sessionId);
+          if (!session) session = createSession(sessionId);
+          session.provider = cmd.args;
+          // Auto-set custom provider's default model
+          const rawC = await env.CONFIG.get("custom_providers", "json");
+          const customsC: CustomProviderConfig[] = (rawC as CustomProviderConfig[]) || [];
+          const customC = customsC.find((c) => c.id === cmd.args);
+          if (customC?.default_model) session.model = customC.default_model;
+          await saveSession(env.SESSIONS, sessionId, session);
           await sendText(env, chatId, `Provider set to: ${cmd.args}`);
         } else {
           const providers = await listProviders(env);
@@ -440,32 +447,32 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           await sendText(env, chatId, "Persona updated.");
         } else {
           const current = (await env.CONFIG.get(`persona:${sessionId}`)) || env.DEFAULT_SYSTEM_PROMPT || "default";
-          await sendText(env, chatId, `Current persona:\n${current}\n\nUsage: /persona <prompt>`);
+          await sendText(env, chatId, `Current persona: ${current}\n\nUsage: /persona <prompt>`);
         }
         return;
 
       case "status": {
-        const session = await (await import("../memory")).getSession(env.SESSIONS, sessionId);
+        const { getSession } = await import("../memory");
+        const session = await getSession(env.SESSIONS, sessionId);
         const msgCount = session?.messages?.length || 0;
         const provider = session?.provider || env.DEFAULT_PROVIDER || "openai";
         const model = session?.model || env.DEFAULT_MODEL || "(provider default)";
         const persona = (await env.CONFIG.get(`persona:${sessionId}`)) || env.DEFAULT_SYSTEM_PROMPT || "default";
         await sendText(env, chatId,
-          `Status\n\n` +
-          `Provider: ${provider}\n` +
-          `Model: ${model}\n` +
+          `*AuxloNeo Status*\n` +
+          `Provider: \`${provider}\`\n` +
+          `Model: \`${model}\`\n` +
           `Messages: ${msgCount}\n` +
-          `Persona: ${persona.slice(0, 100)}${persona.length > 100 ? "..." : ""}`
+          `Persona: ${persona.slice(0, 80)}${persona.length > 80 ? "..." : ""}`
         );
         return;
       }
 
       case "commands":
-      case "help": {
+      case "help":
         const helpLines = BOT_COMMANDS.map((c) => `/${c.command} - ${c.description}`);
-        await sendText(env, chatId, "Commands:\n" + helpLines.join("\n"));
+        await sendText(env, chatId, "*AuxloNeo Commands*\n" + helpLines.join("\n"));
         return;
-      }
 
       case "cancel":
         await clearWizardState(env, userId);
@@ -475,13 +482,13 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   }
 
   // ---- Not a command -- send to agent ----
-  const req: AgentRequest = {
+  const agentReq: AgentRequest = {
     message: text,
     session_id: sessionId,
   };
 
   ctx.waitUntil(
-    agentChat(env, req)
+    agentChat(env, agentReq)
       .then((res) => sendText(env, chatId, res.content))
       .catch((err) => sendText(env, chatId, `Error: ${err.message}`))
   );
@@ -509,12 +516,14 @@ export async function handleTelegramWebhook(
   return new Response("OK");
 }
 
-// ---- Setup functions ----
+// ---- Register slash commands ----
 
 export async function registerTelegramCommands(env: Env): Promise<string> {
   const result = await tgApi(env, "setMyCommands", { commands: BOT_COMMANDS });
   return JSON.stringify(result);
 }
+
+// ---- Set webhook ----
 
 export async function setTelegramWebhook(env: Env, origin: string): Promise<string> {
   const body: Record<string, unknown> = {
