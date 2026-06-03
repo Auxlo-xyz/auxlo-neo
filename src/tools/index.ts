@@ -101,6 +101,28 @@ export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[
     {
       type: "function",
       function: {
+        name: "x_fetch",
+        description: "Fetch a tweet or user profile from X/Twitter. Returns the tweet content, author, likes, retweets, and replies. No API key required.",
+        parameters: {
+          type: "object",
+          properties: {
+            fetch_type: {
+              type: "string",
+              enum: ["tweet", "user"],
+              description: "What to fetch: 'tweet' for a specific tweet, 'user' for a user profile"
+            },
+            id: {
+              type: "string",
+              description: "The tweet ID (numbers only, e.g. '123456789') or username (e.g. 'elonmusk')"
+            }
+          },
+          required: ["fetch_type", "id"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
         name: "current_time",
         description: "Get the current date and time in UTC.",
         parameters: { type: "object", properties: {} },
@@ -129,6 +151,8 @@ export async function executeTool(
         return await toolRemember(env, ctx?.sessionId, args.key as string, args.value as string);
       case "recall":
         return await toolRecall(env, ctx?.sessionId, args.query as string);
+      case "x_fetch":
+        return await toolXFetch(args.fetch_type as string, args.id as string);
       case "current_time":
         return { content: new Date().toISOString() };
       default:
@@ -340,3 +364,63 @@ async function toolRecall(
 
   return { content: results.join("\n") };
 }
+async function toolXFetch(fetchType: string, id: string): Promise<ToolResult> {
+  let url: string;
+  if (fetchType === "tweet") {
+    url = `https://api.vxtwitter.com/Twitter/status/${id}`;
+  } else if (fetchType === "user") {
+    url = `https://api.vxtwitter.com/${id}`;
+  } else {
+    return { content: "Invalid fetch_type: must be 'tweet' or 'user'", error: true };
+  }
+
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; AuxloNeo/1.0)" },
+  });
+
+  if (!response.ok) {
+    return { content: `X/Twitter fetch failed: HTTP ${response.status}`, error: true };
+  }
+
+  const data: any = await response.json();
+
+  if (fetchType === "tweet") {
+    const text = data.text || "";
+    const author = data.author?.name || "Unknown";
+    const handle = data.author?.screenName || "";
+    const likes = data.likes || 0;
+    const retweets = data.retweets || 0;
+    const replies = data.replies || 0;
+    const date = data.date || "";
+    const media = data.mediaURLs?.length ? data.mediaURLs.join(", ") : "none";
+
+    return {
+      content: [
+        `Tweet by ${author} (@${handle})`,
+        `Date: ${date}`,
+        "",
+        text,
+        "",
+        `Likes: ${likes} | Retweets: ${retweets} | Replies: ${replies}`,
+        media !== "none" ? `Media: ${media}` : "",
+      ].filter(Boolean).join("\n"),
+    };
+  }
+
+  // user
+  const name = data.name || id;
+  const bio = data.bio || "No bio";
+  const followers = data.followers || 0;
+  const following = data.following || 0;
+  const tweets = data.statusesCount || 0;
+  const verified = data.verified || false;
+
+  return {
+    content: [
+      `${name} (@${id})${verified ? " [Verified]" : ""}`,
+      bio,
+      `Followers: ${followers} | Following: ${following} | Tweets: ${tweets}`,
+    ].join("\n"),
+  };
+}
+

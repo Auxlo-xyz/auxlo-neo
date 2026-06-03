@@ -58,3 +58,44 @@ export async function getMemory(kv: KVNamespace, sessionId: string): Promise<str
 
   return memories.length > 0 ? memories.join("\n") : null;
 }
+// ---- Usage tracking ----
+
+export interface UsageStats {
+  session_id: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  requests: number;
+  last_model?: string;
+  last_provider?: string;
+  last_updated: number;
+}
+
+export async function trackUsage(
+  kv: KVNamespace,
+  sessionId: string,
+  usage: { prompt_tokens?: number; completion_tokens?: number },
+  model?: string,
+  provider?: string
+): Promise<void> {
+  const key = "usage:" + sessionId;
+  const raw = await kv.get(key, "json");
+  const stats: UsageStats = raw
+    ? (raw as UsageStats)
+    : { session_id: sessionId, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, requests: 0, last_updated: 0 };
+
+  stats.prompt_tokens += usage.prompt_tokens || 0;
+  stats.completion_tokens += usage.completion_tokens || 0;
+  stats.total_tokens += (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+  stats.requests += 1;
+  stats.last_model = model || stats.last_model;
+  stats.last_provider = provider || stats.last_provider;
+  stats.last_updated = Date.now();
+
+  await kv.put(key, JSON.stringify(stats), { expirationTtl: 60 * 60 * 24 * 90 });
+}
+
+export async function getUsage(kv: KVNamespace, sessionId: string): Promise<UsageStats | null> {
+  const raw = await kv.get("usage:" + sessionId, "json");
+  return raw as UsageStats | null;
+}

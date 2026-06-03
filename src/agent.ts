@@ -1,7 +1,7 @@
 import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest } from "./types";
 import { callProvider } from "./providers";
 import { getToolDefinitions, executeTool } from "./tools";
-import { getSession, saveSession, createSession, addMessage, getMemory } from "./memory";
+import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage } from "./memory";
 
 const MAX_TOOL_ROUNDS = 8;
 
@@ -10,6 +10,7 @@ const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a fast, capable AI assistant ru
 You have access to tools. Use them proactively:
 - web_search: Use when you need current information, facts, news, or anything beyond your training data. Don't guess -- search.
 - web_fetch: Use to read a specific URL, article, or documentation page.
+- x_fetch: Use to fetch tweets or X/Twitter user profiles. No auth needed. Pass fetch_type="tweet" and id=<tweet_id>, or fetch_type="user" and id=<username>.
 - send_message: Use to send progress updates during long multi-step tasks. The user sees this as a separate message before your final reply. Use it to keep them informed: "Searching...", "Found X, now checking Y...", etc.
 - remember: Use to save important information the user tells you. Names, preferences, project details, instructions. These persist across conversations.
 - recall: Use to check your memory before asking the user to repeat themselves.
@@ -136,6 +137,11 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
 
   session.updatedAt = Date.now();
   await saveSession(env.SESSIONS, sessionId, session);
+
+  // Track usage
+  if (usage) {
+    await trackUsage(env.MEMORY, sessionId, usage, finalModel, providerName).catch(() => {});
+  }
 
   return {
     content: finalContent,

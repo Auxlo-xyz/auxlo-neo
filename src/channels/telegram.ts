@@ -1,5 +1,7 @@
+import { markdownToTelegram } from "./markdown";
 import type { Env, AgentRequest, CustomProviderConfig } from "../types";
 import { agentChat } from "../agent";
+import { getUsage } from "../memory";
 import { listProviders } from "../providers";
 
 // ---- Telegram types ----
@@ -53,6 +55,7 @@ const BOT_COMMANDS = [
   { command: "persona", description: "Set system prompt" },
   { command: "status", description: "Show current session info" },
   { command: "endpoints", description: "List saved endpoints" },
+  { command: "usage", description: "Show token usage stats" },
 ];
 
 // ---- Helpers ----
@@ -86,22 +89,36 @@ async function sendText(env: Env, chatId: number, text: string, replyMarkup?: Re
     }
   }
   for (const chunk of chunks) {
-    const body: Record<string, unknown> = { chat_id: chatId, text: chunk };
+    const formatted = markdownToTelegram(chunk);
+    const body: Record<string, unknown> = { chat_id: chatId, text: formatted, parse_mode: "MarkdownV2" };
     if (replyMarkup && chunk === chunks[chunks.length - 1]) {
       body.reply_markup = replyMarkup;
     }
-    await tgApi(env, "sendMessage", body);
+    let result = await tgApi(env, "sendMessage", body);
+    if (!result?.ok) {
+      // Fallback to plain text if MarkdownV2 fails
+      delete body.parse_mode;
+      body.text = chunk;
+      await tgApi(env, "sendMessage", body);
+    }
   }
 }
 
 async function editText(env: Env, chatId: number, messageId: number, text: string, replyMarkup?: Record<string, unknown>): Promise<void> {
+  const formatted = markdownToTelegram(text);
   const body: Record<string, unknown> = {
     chat_id: chatId,
     message_id: messageId,
-    text,
+    text: formatted,
+    parse_mode: "MarkdownV2",
   };
   if (replyMarkup) body.reply_markup = replyMarkup;
-  await tgApi(env, "editMessageText", body);
+  let result = await tgApi(env, "editMessageText", body);
+  if (!result?.ok) {
+    delete body.parse_mode;
+    body.text = text;
+    await tgApi(env, "editMessageText", body);
+  }
 }
 
 async function answerCallback(env: Env, callbackId: string, text?: string): Promise<void> {
@@ -464,6 +481,27 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           `Model: \`${model}\`\n` +
           `Messages: ${msgCount}\n` +
           `Persona: ${persona.slice(0, 80)}${persona.length > 80 ? "..." : ""}`
+        );
+        return;
+      }
+
+      case "usage": {
+        const { getUsage } = await import("../memory");
+        const stats = await getUsage(env.MEMORY, sessionId);
+        if (!stats || stats.requests === 0) {
+          await sendText(env, chatId, "No usage recorded yet. Send a message to get started!");
+          return;
+        }
+        const since = stats.last_updated ? new Date(stats.last_updated).toLocaleDateString() : "N/A";
+        await sendText(env, chatId,
+          `*Token Usage*\n` +
+          `Requests: ${stats.requests}\n` +
+          `Prompt tokens: ${stats.prompt_tokens.toLocaleString()}\n` +
+          `Completion tokens: ${stats.completion_tokens.toLocaleString()}\n` +
+          `Total tokens: ${stats.total_tokens.toLocaleString()}\n` +
+          `Last model: \`${stats.last_model || "N/A"}\`\n` +
+          `Last provider: \`${stats.last_provider || "N/A"}\`\n` +
+          `Since: ${since}`
         );
         return;
       }
