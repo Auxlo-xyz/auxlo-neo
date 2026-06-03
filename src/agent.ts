@@ -24,9 +24,19 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     session = createSession(sessionId);
   }
 
-  // Resolve provider/model: request > session > env default
-  const providerName = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
+  // Resolve provider/model: request > session > env default > first custom provider > "openai"
+  let providerName = req.provider || session.provider || env.DEFAULT_PROVIDER || "";
   const model = req.model || session.model || env.DEFAULT_MODEL || undefined;
+
+  // If no provider resolved, try custom providers in KV, then fall back to "openai"
+  if (!providerName) {
+    try {
+      const raw = await env.CONFIG.get("custom_providers", "json");
+      const customs: { id: string }[] = (raw as { id: string }[]) || [];
+      if (customs.length > 0) providerName = customs[0].id;
+    } catch { /* ignore */ }
+    if (!providerName) providerName = "openai";
+  }
 
   // Extract channel context from session ID
   const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
