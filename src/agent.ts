@@ -76,8 +76,10 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     ? `${systemPrompt}\n\n---\nThings you remember about this user:\n${memoryContext}`
     : systemPrompt;
 
+  const finalSystemPrompt = `${fullSystem}\n\nCurrently running on model: ${model || "default"} via ${providerName}.`;
+
   const messages: Message[] = [
-    { role: "system", content: fullSystem },
+    { role: "system", content: finalSystemPrompt },
     ...session.messages,
   ];
 
