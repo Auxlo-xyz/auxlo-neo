@@ -175,7 +175,9 @@ export async function executeTool(
       case "x_fetch":
         return await toolXFetch(args.fetch_type as string, args.id as string);
       case "remote_exec":
-        return await toolRemoteExec(env, args.command as string, args.workspace_id as string);
+        // Automatically inject workspace_id if missing to prevent LLM forgetfulness
+        const workspaceId = args.workspace_id || ctx?.sessionId || "default_workspace";
+        return await toolRemoteExec(env, args.command as string, workspaceId);
       case "current_time":
         return { content: new Date().toISOString() };
       default:

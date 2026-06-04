@@ -6,6 +6,7 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
 
 ## What you get
 
+- **Brain & Muscle Architecture**: AuxloNeo uses a distributed intelligence model. The "Brain" (Cloudflare Worker) handles reasoning and memory, while the "Muscle" (Vercel Fluid Compute) provides a real Linux environment to execute CLI tools.
 - **Dual-Layer Memory**:
   - **Automatic Reflection**: Background analysis of conversations to learn preferences and facts across sessions.
   - **Explicit Memory**: Manual `remember` and `recall` tools for high-priority storage.
@@ -14,7 +15,13 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
 - **Telegram bot** webhook handler with typing indicators and usage stats
 - **Discord bot** slash commands (`/chat`, `/reset`, `/help`)
 - **Multi-provider LLM support**: OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, DeepSeek
-- **Built-in tools**: `web_search` (DuckDuckGo), `web_fetch` (URL reading), `x_fetch` (X/Twitter), `send_message`, `current_time`
+- **Built-in tools**: 
+  - `web_search` (DuckDuckGo)
+  - `web_fetch` (URL reading)
+  - `x_fetch` (X/Twitter)
+  - `remote_exec` (Full CLI access: git, npm, python, ffmpeg, etc.)
+  - `send_message` (Progress updates)
+  - `current_time` (UTC timestamp)
 - **Session memory** via Cloudflare KV (7-day TTL)
 - **Tool calling loop** (up to 8 rounds per request)
 - **Streaming** support for OpenAI-compatible API
@@ -28,9 +35,11 @@ Request → index.ts (router) → Channel handler → agentChat() → Provider l
                                     KV (sessions, memory, config)
                                          ↕
                                  Compression & Reflection
+                                         ↕
+                                 Remote Executor (Vercel)
 ```
 
-Everything is stateless HTTP. No long-lived processes, no WebSocket connections, no filesystem, no databases. Cloudflare KV handles all persistence.
+Everything is stateless HTTP. No long-lived processes, no WebSocket connections, no filesystem, no databases. Cloudflare KV handles all persistence, and Vercel Fluid Compute handles ephemeral CLI execution.
 
 ## Quick start
 
@@ -174,6 +183,7 @@ curl -X POST https://your-worker.workers.dev/v1/chat/completions \
 - Streaming responses
 - Web search (DuckDuckGo)
 - Automatic Memory & Context Compaction
+- Full Linux CLI capabilities via Remote Execution
 
 ## License
 
