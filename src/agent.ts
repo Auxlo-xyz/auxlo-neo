@@ -124,7 +124,8 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
       addMessage(session, assistantMsg);
       messages.push(assistantMsg);
 
-      for (const tc of result.toolCalls) {
+      // Execute tools in parallel
+      const toolPromises = result.toolCalls.map(async (tc) => {
         const toolName = tc.function.name;
         let toolArgs: Record<string, unknown>;
         try {
@@ -137,11 +138,19 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
         }
 
         const toolResult = await executeTool(env, toolName, toolArgs, toolCtx);
+        return {
+          id: tc.id,
+          content: toolResult.content,
+        };
+      });
 
+      const toolResults = await Promise.all(toolPromises);
+
+      for (const tr of toolResults) {
         const toolMsg: Message = {
           role: "tool",
-          tool_call_id: tc.id,
-          content: toolResult.content,
+          tool_call_id: tr.id,
+          content: tr.content,
         };
         addMessage(session, toolMsg);
         messages.push(toolMsg);
