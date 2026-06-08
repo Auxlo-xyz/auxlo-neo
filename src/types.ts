@@ -25,6 +25,9 @@ export interface Env {
   MUSCLE_API_KEY?: string;
   SOMNIA_RPC_URL?: string;
   SOMNIA_PRIVATE_KEY?: string;
+  
+  // Cloudflare API token for cron management
+  CLOUDFLARE_API_TOKEN?: string;
 }
 
 export interface Message {

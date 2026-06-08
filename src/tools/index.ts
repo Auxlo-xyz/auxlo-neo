@@ -144,6 +144,36 @@ export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[
     {
       type: "function",
       function: {
+        name: "set_cron",
+        description: "Create or update a cron trigger for autonomous periodic scanning. Requires CLOUDFLARE_API_TOKEN with Workers:Cron:Edit permission.",
+        parameters: {
+          type: "object",
+          properties: {
+            schedule: {
+              type: "string",
+              description: "Cron expression (e.g. '*/5 * * * *' for every 5 minutes, '0 * * * *' for hourly)"
+            },
+            action: {
+              type: "string",
+              enum: ["create", "delete"],
+              description: "Create or delete the cron trigger"
+            }
+          },
+          required: ["schedule", "action"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_crons",
+        description: "List all cron triggers currently configured for this worker.",
+        parameters: { type: "object", properties: {} }
+      }
+    },
+    {
+      type: "function",
+      function: {
         name: "current_time",
         description: "Get the current date and time in UTC.",
         parameters: { type: "object", properties: {} },
@@ -270,6 +300,10 @@ export async function executeTool(
         return await toolRemoteExec(env, args.command as string, workspaceId);
       case "current_time":
         return { content: new Date().toISOString() };
+      case "set_cron":
+        return await toolSetCron(env, args.cron as string, args.action as "create" | "delete", args.name as string | undefined);
+      case "list_crons":
+        return await toolListCrons(env);
       case "somnia_balance":
         return await toolSomniaBalance(env, args.address as string);
       case "somnia_send":
@@ -482,6 +516,112 @@ async function toolSomniaSnoop(env: Env, target: string, ctx?: ToolContext): Pro
   ].join('\n');
 
   return { content: summary };
+}
+
+// ---- Cron Management Tools ----
+
+async function toolSetCron(env: Env, cron: string, action: "create" | "delete", name?: string): Promise<ToolResult> {
+  const apiToken = env.CLOUDFLARE_API_TOKEN;
+  if (!apiToken) {
+    return { content: "CLOUDFLARE_API_TOKEN not configured. Required for autonomous cron management.", error: true };
+  }
+
+  const accountId = "44a1ecaec103e8647173ede4e002fc26";
+  const workerName = "auxlo-neo";
+
+  try {
+    // Get existing schedules
+    const listUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/schedules`;
+    const listResp = await fetch(listUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!listResp.ok) {
+      const err = await listResp.text();
+      return { content: `Failed to list schedules: ${err}`, error: true };
+    }
+
+    const listData = await listResp.json() as { result?: Array<{ cron: string }> };
+    const existing = listData.result || [];
+
+    if (action === "delete") {
+      const filtered = existing.filter(s => s.cron !== cron);
+      const result = await fetch(listUrl, {
+        method: "PUT",
+        headers: {
+          "Authorization": `Bearer ${apiToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(filtered),
+      });
+      if (!result.ok) {
+        const err = await result.text();
+        return { content: `Failed to delete cron: ${err}`, error: true };
+      }
+      return { content: `Cron "${cron}" deleted.` };
+    }
+
+    // Create/update
+    if (!existing.find(s => s.cron === cron)) {
+      existing.push({ cron });
+    }
+    const result = await fetch(listUrl, {
+      method: "PUT",
+      headers: {
+        "Authorization": `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(existing),
+    });
+    if (!result.ok) {
+      const err = await result.text();
+      return { content: `Failed to set cron: ${err}`, error: true };
+    }
+    return { content: `Cron "${cron}" scheduled. Worker will run on this schedule.` };
+  } catch (err: any) {
+    return { content: `Cron management failed: ${err.message}`, error: true };
+  }
+}
+
+async function toolListCrons(env: Env): Promise<ToolResult> {
+  const apiToken = env.CLOUDFLARE_API_TOKEN;
+  if (!apiToken) {
+    return { content: "CLOUDFLARE_API_TOKEN not configured.", error: true };
+  }
+
+  const accountId = "44a1ecaec103e8647173ede4e002fc26";
+  const workerName = "auxlo-neo";
+
+  try {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${workerName}/schedules`;
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      return { content: `Failed to list crons: ${err}`, error: true };
+    }
+
+    const data = await resp.json() as { result?: Array<{ cron: string }> };
+    const schedules = data.result || [];
+
+    if (schedules.length === 0) {
+      return { content: "No cron triggers configured." };
+    }
+
+    return { content: `Active cron schedules:\n${schedules.map(s => `- ${s.cron}`).join("\n")}` };
+  } catch (err: any) {
+    return { content: `List crons failed: ${err.message}`, error: true };
+  }
 }
 
 async function toolWebSearch(query: string, numResults: number): Promise<ToolResult> {

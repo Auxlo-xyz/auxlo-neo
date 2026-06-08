@@ -7,6 +7,7 @@ import { MAX_HISTORY_LIMIT } from "./types";
 import { BUILTIN, loadCustomProviders } from "./providers";
 
 const MAX_TOOL_ROUNDS = 8;
+const PROGRESS_NUDGE_INTERVAL = 5; // Nudge every 5 tool calls
 
 const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a high-frequency AI Operator specializing in the Somnia Agentic L1. You are not a general assistant; you are a precision tool for on-chain execution and alpha discovery.
 
@@ -18,10 +19,16 @@ SOP (Standard Operating Procedure):
 3. EXECUTION: Use \`somnia_call_contract\` or \`somnia_send\` to act instantly once a target is validated.
 4. SIGNALING: Use \`somnia_publish_stream\` to broadcast your actions, state, or service offerings to other agents on the network. This establishes your presence in the Agent-to-Agent economy.
 
+AUTONOMOUS OPERATION:
+- Use \`set_cron\` to create periodic scan schedules (e.g., every 5 minutes for target monitoring)
+- Use \`list_crons\` to see all active schedules
+- Use \`add_scan_target\` to add targets for periodic scanning
+- Use \`send_message\` after every 5 tool calls to update the user on progress
+
 Your Toolset:
-- Somnia-Native: \`somnia_balance\`, \`somnia_send\`, \`somnia_call_contract\`, \`somnia_publish_stream\`, \`somnia_read_stream\`.
-- Intelligence: \`x_fetch\`, \`web_search\`, \`web_fetch\`, \`somnia_snoop\`.
-- Infrastructure: \`remote_exec\` (Full Linux CLI for contract analysis/scripts).
+- Somnia-Native: \`somnia_balance\`, \`somnia_send\`, \`somnia_call_contract\`, \`somnia_publish_stream\`, \`somnia_read_stream\`, \`somnia_snoop\`.
+- Intelligence: \`x_fetch\`, \`web_search\`, \`web_fetch\`.
+- Infrastructure: \`remote_exec\` (Full Linux CLI), \`send_message\` (proactive notifications), \`current_time\` (UTC timestamp), \`set_cron\`, \`list_crons\`.
 - Memory: \`remember\` and \`recall\` for tracking target wallets and project notes.
 
 Be clinical. Be fast. Prioritize correctness and security. No apologies, no filler. Execute precisely.`;
@@ -98,11 +105,23 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   const toolDefs = getToolDefinitions(env, toolCtx);
 
   let round = 0;
+  let totalToolCallsCount = 0; // Track total tool calls across rounds
   let finalContent = "";
   let finalModel = "";
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
 
   while (round < MAX_TOOL_ROUNDS) {
+    // Progress nudge: after every PROGRESS_NUDGE_INTERVAL tool calls, prompt for user update
+    if (totalToolCallsCount > 0 && totalToolCallsCount % PROGRESS_NUDGE_INTERVAL === 0 && channel) {
+      // Extract target from session ID (telegram:12345 -> 12345, discord:user123 -> user123)
+      const targetId = sessionId.split(":")[1] || "";
+      const nudgeMessage: Message = {
+        role: "system",
+        content: `PROGRESS UPDATE REQUIRED: You have executed ${totalToolCallsCount} tool calls. Briefly update the user on your progress using the \`send_message\` tool. Use channel: "${channel}" and target: "${targetId}". Keep the update concise - 1-2 sentences summarizing what you've done and what's next. Then continue with your task.`,
+      };
+      messages.push(nudgeMessage);
+    }
+
     const providerReq: ProviderRequest = {
       model,
       messages,
@@ -157,6 +176,8 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
         messages.push(toolMsg);
       }
 
+      // Count tool calls for progress nudging
+      totalToolCallsCount += result.toolCalls.length;
       round++;
       continue;
     }
