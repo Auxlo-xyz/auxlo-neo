@@ -23,6 +23,8 @@ export interface Env {
   API_KEY?: string;
   EXECUTOR_URL?: string;
   MUSCLE_API_KEY?: string;
+  SOMNIA_RPC_URL?: string;
+  SOMNIA_PRIVATE_KEY?: string;
 }
 
 export interface Message {

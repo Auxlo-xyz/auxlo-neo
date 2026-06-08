@@ -255,7 +255,7 @@ async function toolSomniaBalance(env: Env, address: string): Promise<ToolResult>
   });
 
   if (!response.ok) return { content: `RPC Error: ${response.status}`, error: true };
-  const data = await response.json();
+  const data = (await response.json()) as any;
   if (data.error) return { content: `RPC Error: ${data.error.message}`, error: true };
 
   const balanceHex = data.result;
