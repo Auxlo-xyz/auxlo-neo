@@ -221,7 +221,7 @@ export async function executeTool(
         return await toolXFetch(args.fetch_type as string, args.id as string);
       case "remote_exec":
         // Automatically inject workspace_id if missing to prevent LLM forgetfulness
-        const workspaceId = args.workspace_id || ctx?.sessionId || "default_workspace";
+        const workspaceId = (args.workspace_id as string) || ctx?.sessionId || "default_workspace";
         return await toolRemoteExec(env, args.command as string, workspaceId);
       case "current_time":
         return { content: new Date().toISOString() };
