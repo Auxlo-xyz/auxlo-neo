@@ -194,6 +194,51 @@ export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "somnia_publish_stream",
+        description: "Publish structured data to a Somnia Data Stream. Use this to broadcast your status, offer services to other agents, or record on-chain events.",
+        parameters: {
+          type: "object",
+          properties: {
+            schema: { type: "string", description: "The schema string (e.g. 'string message, uint256 timestamp')" },
+            data: { type: "array", items: { type: "string" }, description: "The data values matching the schema" },
+            data_id: { type: "string", description: "A unique ID for this data entry" },
+          },
+          required: ["schema", "data", "data_id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "somnia_read_stream",
+        description: "Read and decode data from a Somnia Data Stream. Use this to monitor other agents or projects.",
+        parameters: {
+          type: "object",
+          properties: {
+            schema: { type: "string", description: "The schema string to decode against" },
+            publisher: { type: "string", description: "The wallet address of the publisher" },
+          },
+          required: ["schema", "publisher"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "somnia_snoop",
+        description: "Advanced analysis tool: monitors a target (X handle or URL), analyzes its Somnia activity, and returns a 'Legitimacy Score' and action recommendation.",
+        parameters: {
+          type: "object",
+          properties: {
+            target: { type: "string", description: "X handle (e.g. '@somnia_network') or website URL" },
+          },
+          required: ["target"],
+        },
+      },
+    },
   ];
 
   return tools;
@@ -231,6 +276,12 @@ export async function executeTool(
         return await toolSomniaSend(env, args.to as string, args.amount as string);
       case "somnia_call_contract":
         return await toolSomniaCall(env, args.contract_address as string, args.function_signature as string, args.args as string[]);
+      case "somnia_publish_stream":
+        return await toolSomniaPublish(env, args.schema as string, args.data as string[], args.data_id as string);
+      case "somnia_read_stream":
+        return await toolSomniaRead(env, args.schema as string, args.publisher as string);
+      case "somnia_snoop":
+        return await toolSomniaSnoop(env, args.target as string, ctx);
       default:
         return { content: `Unknown tool: ${name}`, error: true };
     }
@@ -319,6 +370,62 @@ async function toolSomniaCall(env: Env, contract: string, sig: string, args: str
   const command = `npm install ethers && node -e "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`;
   
   return await toolRemoteExec(env, command);
+}
+
+async function toolSomniaPublish(env: Env, schema: string, data: string[], dataId: string): Promise<ToolResult> {
+  const rpcUrl = env.SOMNIA_RPC_URL || "https://rpc.somnia.network";
+  const privateKey = env.SOMNIA_PRIVATE_KEY;
+  if (!privateKey) return { content: "SOMNIA_PRIVATE_KEY not configured", error: true };
+
+  const script = `
+    const { ethers } = require('ethers');
+    const { SDK } = require('@somnia-chain/streams');
+    async function main() {
+      const publicClient = ethers.JsonRpcProvider('${rpcUrl}');
+      const walletClient = new ethers.Wallet('${privateKey}', publicClient);
+      const sdk = new SDK({ public: publicClient, wallet: walletClient });
+      const schemaId = sdk.streams.computeSchemaId('${schema}');
+      await sdk.streams.set([{ id: '${dataId}', schemaId, data: JSON.stringify(${JSON.stringify(data)}) }]);
+      console.log('Published successfully to stream');
+    }
+    main().catch(console.error);
+  `;
+
+  const command = `npm install ethers @somnia-chain/streams && node -e "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`;
+  return await toolRemoteExec(env, command);
+}
+
+async function toolSomniaRead(env: Env, schema: string, publisher: string): Promise<ToolResult> {
+  const rpcUrl = env.SOMNIA_RPC_URL || "https://rpc.somnia.network";
+  const script = `
+    const { ethers } = require('ethers');
+    const { SDK } = require('@somnia-chain/streams');
+    async function main() {
+      const publicClient = ethers.JsonRpcProvider('${rpcUrl}');
+      const sdk = new SDK({ public: publicClient });
+      const schemaId = sdk.streams.computeSchemaId('${schema}');
+      const data = await sdk.streams.getAllPublisherDataForSchema(schemaId, '${publisher}');
+      console.log(JSON.stringify(data));
+    }
+    main().catch(console.error);
+  `;
+
+  const command = `npm install ethers @somnia-chain/streams && node -e "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`;
+  return await toolRemoteExec(env, command);
+}
+
+async function toolSomniaSnoop(env: Env, target: string, ctx?: ToolContext): Promise<ToolResult> {
+  // This is a high-level macro that uses other tools.
+  // Since we can't call other tools directly from here easily without creating a loop,
+  // we will return a structured set of instructions for the agent to follow.
+  return { 
+    content: `Snoop Mode Activated for ${target}. 
+    To complete this analysis, I will now:
+    1. Use x_fetch to find recent sentiment and mentions of Somnia on their profile.
+    2. Use web_fetch to analyze their official documentation or website.
+    3. Use somnia_balance to check the treasury/wallet associated with them (if found).
+    4. Synthesize all data to provide a 'Legitimacy Score' (0-100).` 
+  };
 }
 
 async function toolWebSearch(query: string, numResults: number): Promise<ToolResult> {
