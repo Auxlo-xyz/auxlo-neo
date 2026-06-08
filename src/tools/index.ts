@@ -149,6 +149,51 @@ export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[
         parameters: { type: "object", properties: {} },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "somnia_balance",
+        description: "Check the STT (Somnia Token) balance of a wallet address on the Somnia blockchain.",
+        parameters: {
+          type: "object",
+          properties: {
+            address: { type: "string", description: "The wallet address to check" },
+          },
+          required: ["address"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "somnia_send",
+        description: "Send STT tokens to a wallet address on the Somnia blockchain.",
+        parameters: {
+          type: "object",
+          properties: {
+            to: { type: "string", description: "The recipient address" },
+            amount: { type: "string", description: "The amount of STT to send (in ether units, e.g. '0.1')" },
+          },
+          required: ["to", "amount"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "somnia_call_contract",
+        description: "Execute a function on a Somnia smart contract. Use this for minting, swapping, or interacting with dApps.",
+        parameters: {
+          type: "object",
+          properties: {
+            contract_address: { type: "string", description: "The address of the smart contract" },
+            function_signature: { type: "string", description: "The function signature (e.g. 'mint(address,uint256)')" },
+            args: { type: "array", items: { type: "string" }, description: "Arguments for the function" },
+          },
+          required: ["contract_address", "function_signature", "args"],
+        },
+      },
+    },
   ];
 
   return tools;
@@ -176,10 +221,16 @@ export async function executeTool(
         return await toolXFetch(args.fetch_type as string, args.id as string);
       case "remote_exec":
         // Automatically inject workspace_id if missing to prevent LLM forgetfulness
-        const workspaceId = (args.workspace_id as string) || ctx?.sessionId || "default_workspace";
+        const workspaceId = args.workspace_id || ctx?.sessionId || "default_workspace";
         return await toolRemoteExec(env, args.command as string, workspaceId);
       case "current_time":
         return { content: new Date().toISOString() };
+      case "somnia_balance":
+        return await toolSomniaBalance(env, args.address as string);
+      case "somnia_send":
+        return await toolSomniaSend(env, args.to as string, args.amount as string);
+      case "somnia_call_contract":
+        return await toolSomniaCall(env, args.contract_address as string, args.function_signature as string, args.args as string[]);
       default:
         return { content: `Unknown tool: ${name}`, error: true };
     }
@@ -189,6 +240,86 @@ export async function executeTool(
 }
 
 // ---- Tool implementations ----
+
+async function toolSomniaBalance(env: Env, address: string): Promise<ToolResult> {
+  const rpcUrl = env.SOMNIA_RPC_URL || "https://rpc.somnia.network";
+  const response = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "eth_getBalance",
+      params: [address, "latest"],
+      id: 1,
+    }),
+  });
+
+  if (!response.ok) return { content: `RPC Error: ${response.status}`, error: true };
+  const data = await response.json();
+  if (data.error) return { content: `RPC Error: ${data.error.message}`, error: true };
+
+  const balanceHex = data.result;
+  const balanceWei = BigInt(balanceHex);
+  const balanceEth = Number(balanceWei) / 1e18;
+
+  return { content: `Balance for ${address}: ${balanceEth} STT` };
+}
+
+async function toolSomniaSend(env: Env, to: string, amount: string): Promise<ToolResult> {
+  // We use the Muscle (remote_exec) to sign and send the transaction
+  const rpcUrl = env.SOMNIA_RPC_URL || "https://rpc.somnia.network";
+  const privateKey = env.SOMNIA_PRIVATE_KEY;
+  if (!privateKey) return { content: "SOMNIA_PRIVATE_KEY not configured", error: true };
+
+  // Build a one-liner node script that uses ethers to send tokens
+  // We install ethers on the fly in the muscle if not present
+  const script = `
+    const { ethers } = require('ethers');
+    async function main() {
+      const provider = new ethers.JsonRpcProvider('${rpcUrl}');
+      const wallet = new ethers.Wallet('${privateKey}', provider);
+      const tx = await wallet.sendTransaction({
+        to: '${to}',
+        value: ethers.parseEther('${amount}')
+      });
+      console.log(tx.hash);
+      await tx.wait();
+    }
+    main().catch(console.error);
+  `;
+
+  const command = `npm install ethers && node -e "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`;
+  
+  // Reuse the existing remote_exec logic
+  return await toolRemoteExec(env, command);
+}
+
+async function toolSomniaCall(env: Env, contract: string, sig: string, args: string[]): Promise<ToolResult> {
+  const rpcUrl = env.SOMNIA_RPC_URL || "https://rpc.somnia.network";
+  const privateKey = env.SOMNIA_PRIVATE_KEY;
+  if (!privateKey) return { content: "SOMNIA_PRIVATE_KEY not configured", error: true };
+
+  const script = `
+    const { ethers } = require('ethers');
+    async function main() {
+      const provider = new ethers.JsonRpcProvider('${rpcUrl}');
+      const wallet = new ethers.Wallet('${privateKey}', provider);
+      const iface = new ethers.Interface([ '${sig}' ]);
+      const data = iface.encodeFunctionData('${sig}', ${JSON.stringify(args)});
+      const tx = await wallet.sendTransaction({
+        to: '${contract}',
+        data: data
+      });
+      console.log(tx.hash);
+      await tx.wait();
+    }
+    main().catch(console.error);
+  `;
+
+  const command = `npm install ethers && node -e "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`;
+  
+  return await toolRemoteExec(env, command);
+}
 
 async function toolWebSearch(query: string, numResults: number): Promise<ToolResult> {
   const encoded = encodeURIComponent(query);
