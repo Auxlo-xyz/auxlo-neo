@@ -415,17 +415,73 @@ async function toolSomniaRead(env: Env, schema: string, publisher: string): Prom
 }
 
 async function toolSomniaSnoop(env: Env, target: string, ctx?: ToolContext): Promise<ToolResult> {
-  // This is a high-level macro that uses other tools.
-  // Since we can't call other tools directly from here easily without creating a loop,
-  // we will return a structured set of instructions for the agent to follow.
-  return { 
-    content: `Snoop Mode Activated for ${target}. 
-    To complete this analysis, I will now:
-    1. Use x_fetch to find recent sentiment and mentions of Somnia on their profile.
-    2. Use web_fetch to analyze their official documentation or website.
-    3. Use somnia_balance to check the treasury/wallet associated with them (if found).
-    4. Synthesize all data to provide a 'Legitimacy Score' (0-100).` 
-  };
+  let xInfo = "";
+  let webInfo = "";
+  let balanceInfo = "No associated wallet found in content.";
+  let score = 0;
+  let findings: string[] = [];
+
+  // 1. X Intelligence
+  try {
+    const isUser = target.startsWith('@') || (!target.includes('://') && !target.includes('.') && !target.includes('/'));
+    const xTarget = target.startsWith('@') ? target.slice(1) : target;
+    const xResult = await toolXFetch(isUser ? "user" : "tweet", xTarget);
+    if (!xResult.error) {
+      xInfo = xResult.content;
+      findings.push("X profile/tweet intelligence gathered.");
+      if (xInfo.includes("[Verified]")) {
+        score += 25;
+        findings.push("Target is X Verified.");
+      }
+    }
+  } catch (e: any) {
+    findings.push(`X intelligence failed: ${e.message}`);
+  }
+
+  // 2. Web Intelligence
+  try {
+    const webResult = await toolWebFetch(target, 5000);
+    if (!webResult.error) {
+      webInfo = webResult.content;
+      findings.push("Web/Doc intelligence gathered.");
+      if (webInfo.length > 500) score += 25; // Content density check
+    }
+  } catch (e: any) {
+    findings.push(`Web intelligence failed: ${e.message}`);
+  }
+
+  // 3. On-Chain Intelligence (Heuristic search for 0x...)
+  const addressMatch = (xInfo + webInfo).match(/0x[a-fA-F0-9]{40}/);
+  if (addressMatch) {
+    const address = addressMatch[0];
+    findings.push(`Detected wallet: ${address}`);
+    const balResult = await toolSomniaBalance(env, address);
+    if (!balResult.error) {
+      balanceInfo = balResult.content;
+      findings.push("Somnia on-chain activity verified.");
+      const balMatch = balanceInfo.match(/(\d+\.?\d*) STT/);
+      if (balMatch && parseFloat(balMatch[1]) > 0) {
+        score += 50;
+        findings.push("Wallet has active STT balance.");
+      }
+    } else {
+      balanceInfo = balResult.content;
+    }
+  }
+
+  // 4. Synthesis
+  const summary = [
+    `--- Somnia Snoop Report: ${target} ---`,
+    `Legitimacy Score: ${score}/100`,
+    `Findings:`,
+    findings.map(f => `- ${f}`).join('\n'),
+    `\nSummary:`,
+    `X Intel: ${xInfo.slice(0, 150)}${xInfo.length > 150 ? '...' : ''}`,
+    `Web Intel: ${webInfo.slice(0, 150)}${webInfo.length > 150 ? '...' : ''}`,
+    `Balance: ${balanceInfo}`
+  ].join('\n');
+
+  return { content: summary };
 }
 
 async function toolWebSearch(query: string, numResults: number): Promise<ToolResult> {
