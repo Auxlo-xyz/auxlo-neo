@@ -1,5 +1,6 @@
 import type { Env, AgentRequest } from "../types";
 import { agentChat } from "../agent";
+import { checkAllowed } from "../utils";
 
 interface DiscordInteraction {
   id: string;
@@ -91,7 +92,21 @@ export async function handleDiscordWebhook(
   // Application command
   if (interaction.type === 2) {
     const commandName = interaction.data?.name;
-    const userId = interaction.member?.user?.id || interaction.user?.id || "unknown";
+    const userId_num = interaction.member?.user?.id || interaction.user?.id;
+    const username = interaction.member?.user?.username || interaction.user?.username || "unknown";
+
+    if (!userId_num) {
+      return new Response("Missing user ID", { status: 400 });
+    }
+
+    const sessionId = `discord:${userId_num}`;
+    const userId = `discord:${userId_num}`; // Channel-prefixed for ALLOWED_USERS isolation
+
+    if (!(await checkAllowed(env, userId))) {
+      console.log(`Unauthorized Discord user: ${userId_num}`);
+      return new Response("Unauthorized", { status: 403 });
+    }
+
     const args = interaction.data?.options?.[0]?.value || "";
 
     switch (commandName) {
@@ -107,7 +122,8 @@ export async function handleDiscordWebhook(
           (async () => {
             const req: AgentRequest = {
               message: args,
-              session_id: `discord:${userId}`,
+              session_id: sessionId,
+              userId: userId, // Pass userId for RLS check
             };
             try {
               const res = await agentChat(env, req);
@@ -124,7 +140,7 @@ export async function handleDiscordWebhook(
       }
 
       case "reset": {
-        await env.SESSIONS.delete(`session:discord:${userId}`);
+        await env.SESSIONS.delete(`session:discord:${userId_num}`);
         return new Response(
           JSON.stringify({ type: 4, data: { content: "Session reset.", flags: 64 } }),
           { headers: { "Content-Type": "application/json" } }
@@ -137,10 +153,56 @@ export async function handleDiscordWebhook(
             type: 4,
             data: {
               content:
-                "**AuxloNeo**\n`/chat <message>` - Talk to AI\n`/reset` - Clear history\n`/help` - This message",
+                "**AuxloNeo Commands**\n" +
+                "`/chat <message>` - Talk to AI\n" +
+                "`/reset` - Clear history\n" +
+                "`/grant <recipient> <resource> <permission> [days]` - Grant access\n" +
+                "`/revoke <grantId>` - Revoke access\n" +
+                "`/shares` - List your grants\n" +
+                "`/help` - This message",
               flags: 64,
             },
           }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      case "grant": {
+        const args = interaction.data?.options?.map(o => o.value).join(" ") || "";
+        const { handleGrantCommand } = await import("../grant-commands");
+        const result = await handleGrantCommand(env, userId, args);
+        
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: result.message, flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      case "revoke": {
+        const grantId = interaction.data?.options?.find(o => o.name === "grant_id")?.value;
+
+        if (!grantId) {
+          return new Response(
+            JSON.stringify({ type: 4, data: { content: "Usage: `/revoke grant_id:<grantId>`", flags: 64 } }),
+            { headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        const { handleRevokeCommand } = await import("../grant-commands");
+        const result = await handleRevokeCommand(env, userId, grantId);
+
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: result.message, flags: 64 } }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      case "shares": {
+        const { handleListSharesCommand } = await import("../grant-commands");
+        const result = await handleListSharesCommand(env, userId);
+
+        return new Response(
+          JSON.stringify({ type: 4, data: { content: result.message.substring(0, 2000), flags: 64 } }),
           { headers: { "Content-Type": "application/json" } }
         );
       }
@@ -164,6 +226,30 @@ export async function registerDiscordCommands(env: Env): Promise<string> {
     },
     { name: "reset", description: "Clear conversation history", type: 1 },
     { name: "help", description: "Show available commands", type: 1 },
+    {
+      name: "grant",
+      description: "Grant access to your data",
+      type: 1,
+      options: [
+        { name: "recipient", description: "User ID (e.g., telegram:123)", type: 3, required: true },
+        { name: "resource", description: "Resource ID (e.g., session:telegram:123)", type: 3, required: true },
+        { name: "permission", description: "read or write", type: 3, required: false },
+        { name: "days", description: "Days until expiry", type: 4, required: false },
+      ],
+    },
+    {
+      name: "revoke",
+      description: "Revoke access to your data",
+      type: 1,
+      options: [
+        { name: "grant_id", description: "Grant ID to revoke", type: 3, required: true },
+      ],
+    },
+    {
+      name: "shares",
+      description: "List your shared data grants",
+      type: 1,
+    },
   ];
 
   const resp = await fetch(

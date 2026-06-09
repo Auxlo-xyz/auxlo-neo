@@ -3,6 +3,7 @@ import type { Env, AgentRequest, CustomProviderConfig } from "../types";
 import { agentChat } from "../agent";
 import { getUsage } from "../memory";
 import { listProviders } from "../providers";
+import { checkAllowed } from "../utils";
 
 // ---- Telegram types ----
 
@@ -56,6 +57,9 @@ const BOT_COMMANDS = [
   { command: "status", description: "Show current session info" },
   { command: "endpoints", description: "List saved endpoints" },
   { command: "usage", description: "Show token usage stats" },
+  { command: "grant", description: "Share your data with another user" },
+  { command: "revoke", description: "Revoke data sharing" },
+  { command: "shares", description: "List your shared resources" },
 ];
 
 // ---- Helpers ----
@@ -210,7 +214,7 @@ function cancelKeyboard(): Record<string, unknown> {
 
 async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: ExecutionContext): Promise<void> {
   const data = cb.data || "";
-  const userId = cb.from.id.toString();
+  const userId = `telegram:${cb.from.id.toString()}`; // Channel-prefixed for isolation
   const chatId = cb.message?.chat.id;
   const messageId = cb.message?.message_id;
 
@@ -346,7 +350,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   if (!msg.text) return;
 
   const chatId = msg.chat.id;
-  const userId = msg.from.id.toString();
+  const userId = `telegram:${msg.from.id.toString()}`; // Channel-prefixed for isolation
   const text = msg.text;
   const sessionId = `telegram:${chatId}`;
 
@@ -514,6 +518,27 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         return;
       }
 
+      case "grant": {
+        const { handleGrantCommand } = await import("../grant-commands");
+        const result = await handleGrantCommand(env, userId, cmd.args || "");
+        await sendText(env, chatId, result.message);
+        return;
+      }
+
+      case "revoke": {
+        const { handleRevokeCommand } = await import("../grant-commands");
+        const result = await handleRevokeCommand(env, userId, cmd.args || "");
+        await sendText(env, chatId, result.message);
+        return;
+      }
+
+      case "shares": {
+        const { handleListSharesCommand } = await import("../grant-commands");
+        const result = await handleListSharesCommand(env, userId);
+        await sendText(env, chatId, result.message);
+        return;
+      }
+
       case "commands":
       case "help":
         const helpLines = BOT_COMMANDS.map((c) => `/${c.command} - ${c.description}`);
@@ -531,6 +556,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   const agentReq: AgentRequest = {
     message: text,
     session_id: sessionId,
+    userId: userId, // Pass userId for RLS check
   };
 
   ctx.waitUntil(
@@ -561,6 +587,22 @@ export async function handleTelegramWebhook(
   }
 
   if (update.message) {
+    const id = update.message?.from?.id;
+    const username = update.message?.from?.username || "unknown";
+    const chatId = update.message?.chat.id;
+
+    if (!id || !chatId) {
+      return new Response("Missing user or chat ID", { status: 400 });
+    }
+
+    const sessionId = `telegram:${chatId}`;
+    const userId = `telegram:${id}`; // Channel-prefixed for ALLOWED_USERS isolation
+
+    if (!(await checkAllowed(env, userId))) {
+      console.log(`Unauthorized Telegram user: ${id}`);
+      return new Response("Unauthorized", { status: 403 });
+    }
+
     ctx.waitUntil(handleMessage(env, update.message, ctx));
     return new Response("OK");
   }

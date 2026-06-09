@@ -60,6 +60,7 @@ export interface ToolResult {
 
 export interface SessionState {
   sessionId: string;
+  owner_id?: string;  // Owner of this session (channel-prefixed)
   messages: Message[];
   model?: string;
   provider?: string;

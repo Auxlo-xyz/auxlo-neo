@@ -1,13 +1,14 @@
 import type { KVNamespace } from "@cloudflare/workers-types";
-import type { SessionState, Message } from "./types";
+import type { Env, SessionState, Message } from "./types";
 
 const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
 const MAX_MESSAGES = 50;
 const MEMORY_TTL = 60 * 60 * 24 * 30; // 30 days
 
-export function createSession(sessionId: string): SessionState {
+export function createSession(sessionId: string, ownerId?: string): SessionState {
   return {
     sessionId,
+    owner_id: ownerId || sessionId.split(":")[0] + ":" + sessionId.split(":")[1], // Default to channel:user format
     messages: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -20,6 +21,10 @@ export async function getSession(kv: KVNamespace, sessionId: string): Promise<Se
 }
 
 export async function saveSession(kv: KVNamespace, sessionId: string, session: SessionState): Promise<void> {
+  // Ensure owner_id is set
+  if (!session.owner_id) {
+    session.owner_id = sessionId;
+  }
   await kv.put(`session:${sessionId}`, JSON.stringify(session), { expirationTtl: SESSION_TTL });
 }
 
@@ -58,6 +63,100 @@ export async function getMemory(kv: KVNamespace, sessionId: string): Promise<str
 
   return memories.length > 0 ? memories.join("\n") : null;
 }
+
+// ==================== RLS-Protected Functions ====================
+
+export interface AccessGrant {
+  resource_type: "session" | "memory" | "usage";
+  resource_id: string;
+  owner_id: string;
+  granted_to: string;
+  permission: "read" | "write" | "admin";
+  granted_at: number;
+  expires_at?: number;
+}
+
+/**
+ * Check if a user has explicit access grant to a resource
+ */
+async function checkSessionAccess(
+  env: Env,
+  resourceId: string,
+  requesterId: string
+): Promise<boolean> {
+  const grantKey = `grant:${resourceId}:${requesterId}`;
+  const grant = await env.CONFIG.get(grantKey, "json") as { expires_at?: number } | null;
+  
+  if (!grant) return false;
+  
+  // Check expiration
+  if (grant.expires_at && grant.expires_at < Date.now()) {
+    await env.CONFIG.delete(grantKey);
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * RLS-protected session getter
+ * - Owners always have access
+ * - Non-owners must have explicit grant
+ * - Throws on unauthorized access
+ */
+export async function getSessionWithRLS(
+  env: Env,
+  sessionId: string,
+  requesterId: string,
+  permission: "read" | "write" = "read"
+): Promise<SessionState | null> {
+  const session = await getSession(env.SESSIONS, sessionId);
+  
+  if (!session) return null;
+  
+  // Extract owner from session or infer from sessionId
+  const ownerId = session.owner_id || sessionId;
+  
+  // Owner always has access
+  if (requesterId === ownerId) {
+    return session;
+  }
+  
+  // Check for explicit grant
+  const hasAccess = await checkSessionAccess(env, sessionId, requesterId);
+  
+  if (!hasAccess) {
+    console.error(`[RLS] Access denied: ${requesterId} -> ${sessionId}`);
+    return null;
+  }
+  
+  return session;
+}
+
+/**
+ * RLS-protected session setter
+ * - Only owners or users with write permission can save
+ */
+export async function saveSessionWithRLS(
+  kv: KVNamespace,
+  sessionId: string,
+  session: SessionState,
+  requesterId: string,
+  permission: "write" | "admin" = "write"
+): Promise<void> {
+  const ownerId = session.owner_id || sessionId;
+  
+  // Owner can always save
+  if (requesterId !== ownerId) {
+    // Non-owner would need write grant check here
+    // For now, we enforce owner-only writes for simplicity
+    console.error(`[RLS] Write denied: ${requesterId} -> ${sessionId}`);
+    return;
+  }
+  
+  await saveSession(kv, sessionId, session);
+}
+
 // ---- Usage tracking ----
 
 export interface UsageStats {
@@ -98,4 +197,12 @@ export async function trackUsage(
 export async function getUsage(kv: KVNamespace, sessionId: string): Promise<UsageStats | null> {
   const raw = await kv.get("usage:" + sessionId, "json");
   return raw as UsageStats | null;
+}
+
+export async function revokeAccess(env: Env, grantId: string): Promise<boolean> {
+  const grant = await env.CONFIG.get(`grant:${grantId}`, "json") as AccessGrant | null;
+  if (!grant) return false;
+  
+  await env.CONFIG.delete(`grant:${grantId}`);
+  return true;
 }

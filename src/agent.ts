@@ -1,7 +1,7 @@
 import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest } from "./types";
 import { callProvider } from "./providers";
 import { getToolDefinitions, executeTool } from "./tools";
-import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage } from "./memory";
+import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage, getSessionWithRLS, saveSessionWithRLS } from "./memory";
 import { compactMessages } from "./compression";
 import { MAX_HISTORY_LIMIT } from "./types";
 import { BUILTIN, loadCustomProviders } from "./providers";
