@@ -37,7 +37,7 @@ async function runPeriodicScan(env: Env): Promise<void> {
       try {
         // Create autonomous scan session
         const req = {
-          message: `Periodic scan: ${target}. Use somnia_snoop to analyze. Report findings if actionable.`,
+          message: `Periodic scan: ${target}. Analyze it with available tools (web_search, web_fetch, twitter). Report findings if actionable.`,
           session_id: `scan:${target}`,
           channel: "telegram", // Default to telegram notifications
         };
@@ -260,7 +260,7 @@ export default {
     const cron = event.cron;
     console.log(`Cron triggered: ${cron} at ${new Date(event.scheduledTime).toISOString()}`);
 
-    // Every 5 minutes: scan for Somnia opportunities
+    // Every 5 minutes: periodic target scan
     if (cron === "*/5 * * * *") {
       await runPeriodicScan(env);
     }

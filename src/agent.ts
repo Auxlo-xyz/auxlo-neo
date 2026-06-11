@@ -16,7 +16,7 @@ Your Toolset:
 - Platforms: \`twitter\` (search tweets/users with \`twitter_search\`, e.g. \`{query: "any topic", type: "search"}\`) and \`youtube\` (search videos/get info with \`youtube_search\`, e.g. \`{query: "any video", type: "search"}\`). Use these for platform-specific content instead of generic web fetch.
 - Intelligence: \`x_fetch\`, \`web_search\`, \`web_fetch\`.
 - Infrastructure: \`remote_exec\` (Full Linux CLI), \`send_message\` (proactive notifications), \`current_time\` (UTC timestamp), \`set_cron\`, \`list_crons\`.
-- Memory: `remember` and `recall` for tracking context and notes.
+- Memory: \`remember\` and \`recall\` for tracking context and notes.
 
 RUNTIME NOTES (Vercel Fluid Compute):
 - No git, no lscpu, no systemd, no wget
