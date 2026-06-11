@@ -1,5 +1,7 @@
 import type { Env, ToolDefinition, ToolResult } from "../types";
 import { saveMemory, getMemory } from "../memory";
+import { twitter } from "./platforms/twitter";
+import { youtube } from "./platforms/youtube";
 
 interface ToolContext {
   channel?: string;
@@ -918,3 +920,14 @@ async function toolRemoteExec(env: Env, command: string, workspaceId?: string): 
   }
 }
 
+
+
+async function toolTwitterSearch(args: Record<string, unknown>): Promise<ToolResult> {
+  const result = await twitter.fetch(args, String(args.workspace_id || "default"));
+  return { content: result };
+}
+
+async function toolYoutubeSearch(args: Record<string, unknown>): Promise<ToolResult> {
+  const result = await youtube.fetch(args, String(args.workspace_id || "default"));
+  return { content: result };
+}

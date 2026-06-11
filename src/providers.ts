@@ -82,10 +82,28 @@ export const BUILTIN: Record<string, ProviderConfig> = {
     defaultModel: "gemini-2.0-flash",
     buildHeaders: () => ({ "Content-Type": "application/json" }),
     transformRequest: (req, model) => {
-      const contents = req.messages.filter((m) => m.role !== "system").map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content || "" }],
-      }));
+      const contents = req.messages.filter((m) => m.role !== "system").map((m) => {
+        if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+          // Build functionCall parts with thoughtSignatures for assistant/model messages
+          const parts = m.tool_calls.map((tc) => {
+            const part: any = {
+              functionCall: {
+                name: tc.function.name,
+                args: JSON.parse(tc.function.arguments || "{}"),
+              },
+            };
+            if (tc.thoughtSignature) {
+              part.functionCall.thoughtSignature = tc.thoughtSignature;
+            }
+            return part;
+          });
+          return { role: "model", parts };
+        }
+        return {
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content || "" }],
+        };
+      });
       const systemMsg = req.messages.find((m) => m.role === "system");
       const body: any = { contents, generationConfig: { maxOutputTokens: req.max_tokens || 4096, temperature: req.temperature } };
       if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
@@ -103,6 +121,7 @@ export const BUILTIN: Record<string, ProviderConfig> = {
         id: `call_${i}`,
         type: "function" as const,
         function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) },
+        thoughtSignature: p.functionCall.thoughtSignature,
       }));
       return {
         content,
@@ -149,6 +168,20 @@ export async function loadCustomProviders(env: Env): Promise<Record<string, Prov
 }
 
 function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
+  if (cp.type === "google") {
+    // Google custom providers use native Gemini API format
+    const baseUrl = cp.base_url.replace(/\/openai\/?$/, "").replace(/\/+$/, "");
+    return {
+      name: cp.name,
+      keyEnv: "__custom__" as any,
+      baseUrl: baseUrl,
+      defaultModel: cp.default_model,
+      buildHeaders: () => ({ "Content-Type": "application/json" }),
+      transformRequest: BUILTIN.google.transformRequest,
+      getEndpointUrl: (model, _key) => `${baseUrl}/models/${model}:generateContent?key=${cp.api_key}`,
+      transformResponse: BUILTIN.google.transformResponse,
+    };
+  }
   if (cp.type === "anthropic") {
     return {
       name: cp.name,
@@ -162,18 +195,6 @@ function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
       }),
       transformRequest: BUILTIN.anthropic.transformRequest,
       transformResponse: BUILTIN.anthropic.transformResponse,
-    };
-  }
-  if (cp.type === "google") {
-    return {
-      name: cp.name,
-      keyEnv: "__custom__" as any,
-      baseUrl: cp.base_url,
-      defaultModel: cp.default_model,
-      buildHeaders: () => ({ "Content-Type": "application/json" }),
-      transformRequest: BUILTIN.google.transformRequest,
-      getEndpointUrl: (model, _key) => `${cp.base_url}/models/${model}:generateContent?key=${cp.api_key}`,
-      transformResponse: BUILTIN.google.transformResponse,
     };
   }
   // openai_compatible (default)

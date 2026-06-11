@@ -37,7 +37,7 @@ interface TelegramUpdate {
 
 interface EndpointWizardState {
   step: "type" | "base_url" | "model" | "api_key" | "confirm";
-  type?: "openai" | "anthropic";
+  type?: "openai" | "anthropic" | "google";
   base_url?: string;
   model?: string;
   api_key?: string;
@@ -193,6 +193,7 @@ function endpointTypeKeyboard(): Record<string, unknown> {
   return {
     inline_keyboard: [
       [{ text: "OpenAI-Compatible", callback_data: "endpoint_type:openai" }, { text: "Anthropic", callback_data: "endpoint_type:anthropic" }],
+      [{ text: "Google Gemini", callback_data: "endpoint_type:google" }],
       [{ text: "Cancel", callback_data: "endpoint_cancel" }],
     ],
   };
@@ -264,11 +265,17 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
 
   // ---- Endpoint wizard: type selection ----
   if (data.startsWith("endpoint_type:")) {
-    const epType = data.split(":")[1] as "openai" | "anthropic";
+    const epType = data.split(":")[1] as "openai" | "anthropic" | "google";
     await setWizardState(env, userId, { step: "base_url", type: epType, started_at: Date.now() });
     await answerCallback(env, cb.id);
-    const typeName = epType === "anthropic" ? "Anthropic" : "OpenAI-Compatible";
-    await sendText(env, chatId, `Adding *${typeName}* endpoint.\n\nSend the base URL.\nExamples:\n- OpenAI: \`https://api.openai.com/v1\`\n- Custom: \`https://api.example.com/v1\`\n- OpenRouter: \`https://openrouter.ai/api/v1\``, cancelKeyboard());
+    const typeName = epType === "anthropic" ? "Anthropic" : epType === "google" ? "Google Gemini" : "OpenAI-Compatible";
+    let examples = "";
+    if (epType === "google") {
+      examples = "Examples:\n- Google: `https://generativelanguage.googleapis.com/v1beta`\n- Custom proxy: `https://your-proxy.example.com/v1beta`";
+    } else {
+      examples = "Examples:\n- OpenAI: `https://api.openai.com/v1`\n- Custom: `https://api.example.com/v1`\n- OpenRouter: `https://openrouter.ai/api/v1`";
+    }
+    await sendText(env, chatId, `Adding *${typeName}* endpoint.\\n\\nSend the base URL.\\n${examples}`, cancelKeyboard());
     return;
   }
 
@@ -280,11 +287,16 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
       return;
     }
 
-    const id = wizard.base_url.replace(/https?:\/\//, "").replace(/[^a-z0-9]/gi, "-").replace(/-+$/, "").toLowerCase().slice(0, 30);
+    let baseUrl = wizard.base_url;
+    if (wizard.type === "google") {
+      baseUrl = baseUrl.replace(/\/openai\/?$/, "").replace(/\/+$/, "");
+    }
+
+    const id = baseUrl.replace(/https?:\/\//, "").replace(/[^a-z0-9]/gi, "-").replace(/-+$/, "").toLowerCase().slice(0, 30);
     const config: CustomProviderConfig = {
       id,
-      name: wizard.base_url.replace(/https?:\/\//, "").split("/")[0],
-      base_url: wizard.base_url,
+      name: baseUrl.replace(/https?:\/\//, "").split("/")[0],
+      base_url: baseUrl,
       api_key: wizard.api_key,
       default_model: wizard.model,
       type: wizard.type,

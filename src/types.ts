@@ -42,6 +42,7 @@ export interface ToolCall {
   id: string;
   type: "function";
   function: { name: string; arguments: string };
+  thoughtSignature?: string;
 }
 
 export interface ToolDefinition {
@@ -56,6 +57,14 @@ export interface ToolDefinition {
 export interface ToolResult {
   content: string;
   error?: boolean;
+}
+
+export interface Skill {
+  id: string;
+  title: string;
+  description: string;
+  instructions: string;
+  builtin?: boolean;
 }
 
 export interface SessionState {
