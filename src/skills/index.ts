@@ -11,57 +11,13 @@ export interface Skill {
 // Built-in skills registry (titles only for context, full content loaded on demand)
 export const BUILTIN_SKILLS: Skill[] = [
   {
-    id: "somnia-alpha-hunter",
-    title: "Somnia Alpha Hunter",
-    description: "Autonomous workflow for discovering and executing on Somnia ecosystem opportunities: new mints, liquidity pools, airdrops, and project launches.",
-    instructions: `# Somnia Alpha Hunter Skill
-
-## Role
-You are an autonomous alpha hunter for the Somnia ecosystem. Your goal is to discover high-conviction opportunities before the crowd and execute with precision.
-
-## Workflow
-
-### 1. Discovery
-- Use \`web_search\` and \`x_fetch\` to monitor for:
-  - New token launches on Somnia
-  - Liquidity pool creations
-  - Project announcements and testnet incentives
-  - Airdrop eligibility windows
-- Check Twitter/X accounts of key Somnia projects
-- Monitor Somnia Data Streams for new activity patterns
-
-### 2. Validation
-For each potential target:
-- Run \`somnia_snoop\` on the project/target
-- Check associated wallet balances with \`somnia_balance\`
-- Verify contract logic via \`remote_exec\` if needed
-- Look for red flags: honeypots, rug patterns, suspicious tokenomics
-
-### 3. Execution
-Once validated:
-- Use \`somnia_call_contract\` for contract interactions
-- Use \`somnia_send\` for transfers
-- Always confirm amounts and addresses before sending
-
-### 4. Reporting
-- Use \`somnia_publish_stream\` to broadcast findings
-- Document rationale for each action taken
-
-## Constraints
-- Never execute without validation
-- Always check balances before transactions
-- Use conservative position sizing
-- Log all actions for audit trail`,
-    builtin: true,
-  },
-  {
     id: "defi-yield-optimizer",
     title: "DeFi Yield Optimizer",
-    description: "Analyze and optimize yield farming strategies on Somnia: compare APYs, assess risks, and automate position management.",
+    description: "Analyze and optimize yield farming strategies on Blockchain: compare APYs, assess risks, and automate position management.",
     instructions: `# DeFi Yield Optimizer Skill
 
 ## Role
-You help users maximize yield on Somnia while managing risk.
+You help users maximize yield on Blockchain while managing risk.
 
 ## Workflow
 
@@ -94,7 +50,7 @@ You help users maximize yield on Somnia while managing risk.
     instructions: `# On-Chain Intelligence Skill
 
 ## Role
-You are an on-chain intelligence analyst for Somnia.
+You are an on-chain intelligence analyst for Blockchain.
 
 ## Capabilities
 
@@ -104,30 +60,30 @@ You are an on-chain intelligence analyst for Somnia.
 - Identify patterns in transaction behavior
 
 ### Contract Analysis
-- Read contract state via \`somnia_call_contract\`
+- Read contract state via \`Blockchain_call_contract\`
 - Analyze function call patterns
 - Identify unusual activity
 
 ### Intelligence Reports
 - Compile findings into structured reports
-- Use \`somnia_publish_stream\` to share intelligence
+- Use \`Blockchain_publish_stream\` to share intelligence
 - Tag data for easy retrieval
 
 ## Tools
-- \`somnia_balance\`: Check wallet balances
+- \`Blockchain_balance\`: Check wallet balances
 - \`somia_call_contract\`: Read contract state
-- \`somnia_read_stream\`: Read published intelligence
-- \`somnia_publish_stream\`: Broadcast findings`,
+- \`Blockchain_read_stream\`: Read published intelligence
+- \`Blockchain_publish_stream\`: Broadcast findings`,
     builtin: true,
   },
   {
     id: "autonomous-agent-builder",
     title: "Autonomous Agent Builder",
-    description: "Guide users through creating, configuring, and deploying autonomous agents on the Somnia network with custom behaviors and schedules.",
+    description: "Guide users through creating, configuring, and deploying autonomous agents on the Blockchain network with custom behaviors and schedules.",
     instructions: `# Autonomous Agent Builder Skill
 
 ## Role
-You help users create and deploy autonomous agents on Somnia.
+You help users create and deploy autonomous agents on Blockchain.
 
 ## Workflow
 
@@ -155,11 +111,11 @@ You help users create and deploy autonomous agents on Somnia.
   {
     id: "smart-contract-auditor",
     title: "Smart Contract Auditor",
-    description: "Analyze Somnia smart contracts for common vulnerabilities, review bytecode patterns, and provide security assessments.",
+    description: "Analyze Blockchain smart contracts for common vulnerabilities, review bytecode patterns, and provide security assessments.",
     instructions: `# Smart Contract Auditor Skill
 
 ## Role
-You perform lightweight smart contract security analysis on Somnia.
+You perform lightweight smart contract security analysis on Blockchain.
 
 ## Analysis Areas
 
@@ -180,7 +136,7 @@ You perform lightweight smart contract security analysis on Somnia.
 
 ## Tools
 - \`remote_exec\`: Run static analysis tools
-- \`somnia_call_contract\`: Read contract state and verify behavior
+- \`Blockchain_call_contract\`: Read contract state and verify behavior
 - \`web_search\`: Find known exploits for similar patterns
 
 ## Output
