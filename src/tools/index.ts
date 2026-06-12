@@ -3,6 +3,7 @@ import { saveMemory, getMemory } from "../memory";
 import { twitter } from "./platforms/twitter";
 import { youtube } from "./platforms/youtube";
 import { getMantleChainToolDefinitions, executeMantleChainTool } from "../skills/mantle-chain";
+import { getByrealToolDefinitions, executeByrealTool } from "../skills/byreal-cli-wrapper";
 
 interface ToolContext {
   channel?: string;
@@ -185,8 +186,12 @@ export async function getToolDefinitions(env: Env, ctx?: ToolContext): Promise<T
                           ];
 
   // Load mantle-chain skill tools if available
-  const mantleTools = await getMantleChainToolDefinitions(env).catch(() => []);
+  const mantleTools = await getMantleChainToolDefinitions(env);
   tools.push(...mantleTools);
+
+  // Load byreal-cli-wrapper skill tools if available
+  const byrealTools = getByrealToolDefinitions();
+  tools.push(...byrealTools);
 
   return tools;
 }
@@ -228,6 +233,15 @@ export async function executeTool(
       case "mantle_get_tx_receipt":
       case "mantle_get_block":
         return await executeMantleChainTool(env, name, args);
+      case "byreal_pools_list":
+      case "byreal_pools_analyze":
+      case "byreal_positions_list":
+      case "byreal_positions_open":
+      case "byreal_positions_close":
+      case "byreal_positions_claim":
+      case "byreal_swap_execute":
+      case "byreal_wallet_balance":
+        return await executeByrealTool(env, name, args);
       default:
         return { content: `Unknown tool: ${name}`, error: true };
     }
