@@ -2,13 +2,14 @@ import type { Env, ToolDefinition, ToolResult } from "../types";
 import { saveMemory, getMemory } from "../memory";
 import { twitter } from "./platforms/twitter";
 import { youtube } from "./platforms/youtube";
+import { getMantleChainToolDefinitions, executeMantleChainTool } from "../skills/mantle-chain";
 
 interface ToolContext {
   channel?: string;
   sessionId?: string;
 }
 
-export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[] {
+export async function getToolDefinitions(env: Env, ctx?: ToolContext): Promise<ToolDefinition[]> {
   const tools: ToolDefinition[] = [
     {
       type: "function",
@@ -183,6 +184,10 @@ export function getToolDefinitions(env: Env, ctx?: ToolContext): ToolDefinition[
     },
                           ];
 
+  // Load mantle-chain skill tools if available
+  const mantleTools = await getMantleChainToolDefinitions(env).catch(() => []);
+  tools.push(...mantleTools);
+
   return tools;
 }
 
@@ -216,6 +221,13 @@ export async function executeTool(
         return await toolSetCron(env, args.cron as string, args.action as "create" | "delete", args.name as string | undefined);
       case "list_crons":
         return await toolListCrons(env);
+      case "mantle_get_balance":
+      case "mantle_call_contract":
+      case "mantle_send_transaction":
+      case "mantle_deploy_contract":
+      case "mantle_get_tx_receipt":
+      case "mantle_get_block":
+        return await executeMantleChainTool(env, name, args);
       default:
         return { content: `Unknown tool: ${name}`, error: true };
     }

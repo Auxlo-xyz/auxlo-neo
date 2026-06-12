@@ -35,7 +35,10 @@ export const youtube: PlatformTool = {
     const type = String(args.type || args.fetch_type || "");
     const id = String(args.id || args.url || "");
     if (type === "transcript") {
-      const { stdout } = await muscleExec(`yt-dlp --print-json --skip-download --write-auto-sub --sub-langs en ${JSON.stringify(id)} 2>/dev/null || yt-dlp --print-json --skip-download ${JSON.stringify(id)}`, workspaceId);
+      const { stdout } = await muscleExec(
+        `yt-dlp --print-json --skip-download --write-auto-sub --sub-langs en ${JSON.stringify(id)} 2>/dev/null || yt-dlp --print-json --skip-download ${JSON.stringify(id)}`,
+        workspaceId
+      );
       return stdout;
     }
     if (type === "info") {

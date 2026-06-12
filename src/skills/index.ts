@@ -11,6 +11,13 @@ export interface Skill {
 // Built-in skills registry (titles only for context, full content loaded on demand)
 export const BUILTIN_SKILLS: Skill[] = [
   {
+    id: "mantle-chain",
+    title: "MantleChain",
+    description: "Mantle Network on-chain operations: read/write contracts, deploy scripts, query balances, publish data streams, and interact with DeFi protocols on Mantle.",
+    instructions: "Loaded on demand from skill module. Use remote_exec for deployment, mantle_get_balance/mantle_call_contract/mantle_send_tx for on-chain ops.",
+    builtin: true,
+  },
+  {
     id: "defi-yield-optimizer",
     title: "DeFi Yield Optimizer",
     description: "Analyze and optimize yield farming strategies on Blockchain: compare APYs, assess risks, and automate position management.",

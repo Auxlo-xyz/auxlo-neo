@@ -113,7 +113,7 @@ const finalSystemPrompt = `${fullSystem}${skillSection}\n\nCurrently running on 
     ...session.messages,
   ];
 
-  const toolDefs = getToolDefinitions(env, toolCtx);
+  const toolDefs = await getToolDefinitions(env, toolCtx);
 
   let round = 0;
   let totalToolCallsCount = 0; // Track total tool calls across rounds

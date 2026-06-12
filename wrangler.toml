@@ -2,14 +2,9 @@ name = "auxlo-neo"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
-# Cron triggers for periodic scans
-# Every 5 minutes: scan for Somnia ecosystem opportunities
-[[triggers.crons]]
-cron = "*/5 * * * *"
-
-# Every hour: cleanup stale sessions
-[[triggers.crons]]
-cron = "0 * * * *"
+# Cron triggers
+[triggers]
+crons = ["*/5 * * * *", "0 * * * *"]
 
 [[kv_namespaces]]
 binding = "SESSIONS"
