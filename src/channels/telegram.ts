@@ -736,7 +736,11 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       await sendChatAction(env, chatId, "typing");
       try {
         const res = await agentChat(env, agentReq);
-        await sendText(env, chatId, res.content);
+        if (!res.content && media.length > 0) {
+          await sendText(env, chatId, "I received your media, but I couldn't make sense of it. Could you provide a caption or question?");
+        } else {
+          await sendText(env, chatId, res.content || "I've processed your media, but have no textual response.");
+        }
       } catch (err: any) {
         await sendText(env, chatId, `Error: ${err.message}`);
       }
