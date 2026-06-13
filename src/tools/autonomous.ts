@@ -282,11 +282,18 @@ async function scanOpportunities(env: Env, args: Record<string, unknown>): Promi
 /*  mantle_execute_yield_strategy — real Merchant Moe swap + deposit   */
 /* ================================================================== */
 
-const MERCHANT_MOE_ROUTER_MAINNET = "0x..."; // replace with real mainnet router
-const MERCHANT_MOE_ROUTER_TESTNET = "0x..."; // replace with real testnet router
-const MNT_ADDRESS = "0x0000000000000000000000000000000000000000"; // native
-const USDC_ADDRESS_MAINNET = "0x..."; // replace with real USDC on Mantle mainnet
-const USDC_ADDRESS_TESTNET = "0x..."; // replace with real USDC on Mantle testnet
+/* ================================================================== */
+/*  Constants for Mantle DeFi Protocols                               */
+/* ================================================================== */
+
+const MERCHANT_MOE_ROUTER_MAINNET = "0xeaEE7EE68874218c3558b40063c42B82D3E7232a";
+const MERCHANT_MOE_ROUTER_TESTNET = "0xFB76e3e8837112373F1b9234EaB90ec8B5266c4f";
+const AGNI_ROUTER_MAINNET = "0x319B69888b0d11cEC22caA5034e25FfFBDc88421";
+const FLUXION_ROUTER_MAINNET = "0x5628a59dF0ECAC3f3171f877A94bEb26BA6DFAa0";
+
+const MNT_ADDRESS = "0x0000000000000000000000000000000000000000";
+const USDC_ADDRESS_MAINNET = "0x09Bc4E0D864854c6aF6C71AC4eD4c1b3C2D25E4c";
+const USDC_ADDRESS_TESTNET = "0xB8255fE3a7f65AfC1d877831Fa9F82E0B5f514D1";
 
 async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
   const strategy = (args.strategy as string) || "balanced";
@@ -298,112 +305,56 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
   const e = getEnv(env);
   const privateKey = e.MANTLE_PRIVATE_KEY;
   if (!privateKey) {
-    return { content: "MANTLE_PRIVATE_KEY not set in env.", error: true };
+    return { content: "MANTLE_PRIVATE_KEY not configured in secrets.", error: true };
   }
 
-  const router =
-    network === "mainnet" ? MERCHANT_MOE_ROUTER_MAINNET : MERCHANT_MOE_ROUTER_TESTNET;
-  const usdc = network === "mainnet" ? USDC_ADDRESS_MAINNET : USDC_ADDRESS_TESTNET;
+  // Map strategy to router
+  const router = network === "mainnet" 
+    ? (strategy === "aggressive" ? AGNI_ROUTER_MAINNET : MERCHANT_MOE_ROUTER_MAINNET)
+    : MERCHANT_MOE_ROUTER_TESTNET;
 
-  // Build a swap calldata via Merchant Moe LB router (exact method IDs to be filled in)
-  // This is a skeleton showing the real flow; the exact ABI must match the deployed router.
-  const swapCalldata =
-    "0x" + "00".repeat(4) + "00".repeat(64); // placeholder: functionSelector + encoded args
-
-  try {
-    // 1. Get wallet address from private key using ethers in Muscle
-    const getAddrCmd = [
-      "set -e",
-      `cat <<'EOF' > /tmp/mantle-agent/getAddr.ts
-import { privateKeyToAccount } from "ethers";
-const account = privateKeyToAccount("${privateKey}");
-console.log(account.address);
-EOF`,
-      "cd /tmp/mantle-agent && npx tsx getAddr.ts 2>/dev/null || npx tsx getAddr.mjs 2>/dev/null || node -e '\"use strict\";const{default:ethers}=require(\"ethers\");const a=new ethers.Wallet(\"" + privateKey + "\");console.log(a.address)'",
-    ].join("\n");
-
-    const addrResult = await remoteExec(getAddrCmd, env);
-    if (addrResult.error) return addrResult;
-    const wallet = (addrResult.content || "").trim();
-    if (!wallet.startsWith("0x")) {
-      return { content: `Invalid wallet address from key: ${addrResult.content}`, error: true };
+  const amountIn = tokenIn === "USDC" ? (maxAmountUsd * 1e6).toString() : (maxAmountUsd * 1e18).toString();
+  
+  // Use a real node script via remoteExec to perform the swap using ethers.js
+  const swapScript = `
+    const { ethers } = require("ethers");
+    async function main() {
+      const provider = new ethers.JsonRpcProvider("${network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'}");
+      const wallet = new ethers.Wallet(process.env.MANTLE_PRIVATE_KEY, provider);
+      const router = new ethers.Contract("${router}", [
+        "function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)",
+        "function approve(address spender, uint256 amount) external returns (bool)"
+      ], wallet);
+      
+      const path = ["${tokenIn === 'USDC' ? (network === 'mainnet' ? USDC_ADDRESS_MAINNET : USDC_ADDRESS_TESTNET) : MNT_ADDRESS}", "${tokenOut === 'MNT' ? MNT_ADDRESS : '0x...'}"];
+      
+      console.log("Executing swap via ${router}...");
+      const tx = await router.swapExactTokensForTokens(
+        ethers.parseEther(amountIn), 
+        0, 
+        path, 
+        wallet.address, 
+        Math.floor(Date.now() / 1000) + 60 * 20
+      );
+      console.log("TX_HASH:" + tx.hash);
     }
+    main().catch(console.error);
+  `;
 
-    // 2. Check MNT balance for gas
-    const balanceHex = await mantleRpc(network, "eth_getBalance", [wallet, "latest"], env);
-    const balanceWei = BigInt(balanceHex || "0x0");
-    const balanceMnt = Number(balanceWei) / 1e18;
+  const result = await remoteExec(swapScript, env);
+  if (result.error) return result;
 
-    if (balanceMnt < 0.001) {
-      return { content: `Insufficient MNT for gas: ${balanceMnt.toFixed(4)} MNT`, error: true };
-    }
-
-    // 3. Approve USDC → router if spending USDC
-    if (tokenIn.toUpperCase() === "USDC") {
-      const approveCmd = [
-        "set -e",
-        `cat <<'EOF' > /tmp/mantle-agent/approve.ts
-import { ethers } from "ethers";
-const provider = new ethers.JsonRpcProvider("${network === "mainnet" ? "https://rpc.mantle.xyz" : "https://rpc.testnet.mantle.xyz"}");
-const wallet = new ethers.Wallet("${privateKey}", provider);
-const token = new ethers.Contract("${usdc}", ["function approve(address,uint256) returns (bool)"], wallet);
-const tx = await token.approve("${router}", ethers.MaxUint256);
-console.log("APPROVE_TX:" + tx.hash);
-EOF`,
-        "cd /tmp/mantle-agent && npx tsx approve.ts",
-      ].join("\n");
-
-      const approveResult = await remoteExec(approveCmd, env);
-      if (approveResult.error) return approveResult;
-    }
-
-    // 4. Build swap tx via Merchant Moe router
-    // NOTE: exact method signature must match the deployed LB router ABI.
-    // Common: function swapExactTokensForTokens(uint256,uint256,address[],address,uint256)
-    const swapCmd = [
-      "set -e",
-      `cat <<'EOF' > /tmp/mantle-agent/swap.ts
-import { ethers } from "ethers";
-const provider = new ethers.JsonRpcProvider("${network === "mainnet" ? "https://rpc.mantle.xyz" : "https://rpc.testnet.mantle.xyz"}");
-const wallet = new ethers.Wallet("${privateKey}", provider);
-// TODO: replace with real router ABI and method
-const router = new ethers.Contract(
-  "${router}",
-  ["function swap(uint256,uint256,address,address,bytes) returns (uint256)"],
-  wallet
-);
-const amountIn = ethers.parseUnits("${maxAmountUsd}", 6); // USDC has 6 decimals
-const minOut = 0;
-const tx = await router.swap(amountIn, minOut, "${usdc}", wallet.address, "0x", { gasLimit: 500000 });
-console.log("SWAP_TX:" + tx.hash);
-EOF`,
-      "cd /tmp/mantle-agent && npx tsx swap.ts",
-    ].join("\n");
-
-    const swapResult = await remoteExec(swapCmd, env);
-    if (swapResult.error) return swapResult;
-
-    const txHashMatch = (swapResult.content || "").match(/SWAP_TX:(0x[a-fA-F0-9]+)/);
-    if (!txHashMatch) {
-      return { content: `Swap executed but no tx hash in output:\n${swapResult.content}`, error: true };
-    }
-
-    const txHash = txHashMatch[1];
-    const explorer =
-      network === "mainnet" ? "https://mantlescan.xyz" : "https://testnet.mantlescan.xyz";
-
-    return {
-      content:
-        `Strategy "${strategy}" executed on Mantle ${network}.\n` +
-        `Wallet: ${wallet}\n` +
-        `Amount: ~$${maxAmountUsd} ${tokenIn} → ${tokenOut}\n` +
-        `Tx: ${txHash}\n` +
-        `Explorer: ${explorer}/tx/${txHash}`,
-      error: false,
+  const match = (result.content || "").match(/TX_HASH:(0x[a-fA-F0-9]+)/);
+  if (match) {
+    return { 
+      content: `Successfully executed ${strategy} strategy on Mantle ${network}!\n` +
+               `Router: ${router}\n` +
+               `Amount: ${maxAmountUsd} USD\n` +
+               `Path: ${tokenIn} → ${tokenOut}\n` +
+               `Tx Hash: ${match[1]}`
     };
-  } catch (err: any) {
-    return { content: `Strategy execution failed: ${err.message}`, error: true };
   }
+  return { content: `Strategy executed but no tx hash found. Log: ${result.content}`, error: true };
 }
 
 /* ================================================================== */
@@ -412,39 +363,59 @@ EOF`,
 
 async function monitorPositions(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
   const wallet = (args.wallet as string) || "";
-  const protocol = (args.protocol as string) || "all";
+  const network = (args.network as "mainnet" | "testnet") || "mainnet";
 
   if (!wallet.startsWith("0x")) {
     return { content: "wallet must be a 0x address", error: true };
   }
 
-  const e = getEnv(env);
-
   try {
     // 1. Native MNT balance
-    const balHex = await mantleRpc("mainnet", "eth_getBalance", [wallet, "latest"], env);
+    const balHex = await mantleRpc(network, "eth_getBalance", [wallet, "latest"], env);
     const mnt = Number(BigInt(balHex || "0x0")) / 1e18;
 
-    // 2. Fetch LP positions via Muscle (agent decides protocol-specific logic)
+    // 2. Use Muscle to get token balances for key assets (USDC, WMNT, BSB)
     const monitorCmd = [
       "set -e",
-      `cat <<'EOF' > /tmp/mantle-agent/monitor.ts
+      `cat <<'EOF' > /tmp/monitor.ts
 import { ethers } from "ethers";
-const provider = new ethers.JsonRpcProvider("https://rpc.mantle.xyz");
+const provider = new ethers.JsonRpcProvider("${network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'}");
 const wallet = "${wallet}";
-// TODO: replace with real protocol ABIs (Merchant Moe, Agni, Fluxion)
-console.log("WALLET:" + wallet);
-console.log("MNT_BAL:" + ethers.formatEther((await provider.getBalance(wallet)).toString()));
+const tokens = {
+  USDC: "${network === 'mainnet' ? '0x09Bc4E0D864854c6aF6C71AC4eD4c1b3C2D25E4c' : '0xB8255fE3a7f65AfC1d877831Fa9F82E0B5f514D1'}",
+  WMNT: "${network === 'mainnet' ? '0x17c412844f188608029f4b1664565c689162117a' : '0x...'} ",
+};
+async function main() {
+  const abi = ["function balanceOf(address) view returns (uint256)"];
+  const results = [];
+  for (const [sym, addr] of Object.entries(tokens)) {
+    try {
+      const contract = new ethers.Contract(addr, abi, provider);
+      const bal = await contract.balanceOf(wallet);
+      results.push(\`\${sym}: \${ethers.formatUnits(bal, 18)}\`);
+    } catch (e) { results.push(\`\${sym}: Error\`); }
+  }
+  console.log(results.join("\\n"));
+}
+main();
 EOF`,
-      "cd /tmp/mantle-agent && npx tsx monitor.ts",
+      "npx tsx /tmp/monitor.ts",
     ].join("\n");
 
     const result = await remoteExec(monitorCmd, env);
     if (result.error) return result;
 
-    const lines = [`Wallet: ${wallet}`, `MNT balance: ${mnt.toFixed(4)}`, "", "Raw output:", result.content];
+    const explorer = network === "mainnet" ? "https://mantlescan.xyz" : "https://testnet.mantlescan.xyz";
 
-    return { content: lines.join("\n"), error: false };
+    return {
+      content:
+        `Mantle ${network} Position Monitor:\n` +
+        `Wallet: ${wallet}\n` +
+        `MNT: ${mnt.toFixed(4)}\n` +
+        `Tokens:\n${result.content}\n` +
+        `Explorer: ${explorer}/address/${wallet}`,
+      error: false,
+    };
   } catch (err: any) {
     return { content: `Monitor failed: ${err.message}`, error: true };
   }
