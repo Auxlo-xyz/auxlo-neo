@@ -580,15 +580,15 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         const args = cmd.args.toLowerCase();
         if (args === "create") {
           await sendChatAction(env, chatId, "typing");
-          const genCmd = `node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); process.stdout.write(w.address + '\\n' + w.privateKey)"`;
+          const genCmd = `npm install ethers && node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
+          const { getSession, saveSession, createSession } = await import("../memory");
           
-          // Use remoteExec directly via the helper to avoid tool resolution overhead
+          // Use remoteExec to generate wallet
           const { executeTool } = await import("../tools");
           const res = await executeTool(env, "remote_exec", { command: genCmd }, { channel: "telegram", sessionId });
           
-          if (res.error || !res.content || res.content.trim() === "") {
-            console.error("Wallet gen failed:", res);
-            await sendText(env, chatId, "Failed to generate wallet. Please try again.");
+          if (res.error || !res.content) {
+            await sendText(env, chatId, `Failed to generate wallet. Error: ${res.content || "No output from executor"}`);
             return;
           }
           
