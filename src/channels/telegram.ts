@@ -490,15 +490,14 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     switch (cmd.command) {
       case "start":
         await sendText(env, chatId,
-          "Welcome to *AuxloNeo* 🚀\n\n" +
-          "I'm your edge-native AI assistant, running entirely on Cloudflare Workers. I'm designed for speed, privacy, and autonomy.\n\n" +
-          "✨ *What I can do for you:*\n" +
-          "💬 *Smart Chat*: Just start typing! I can analyze images and documents you send.\n" +
-          "🛠 *Custom AI*: Use `/endpoint` to add your own LLM providers or `/model` to switch the current brain.\n" +
-          "🎭 *Persona*: Customize how I behave or my system prompt using `/persona`.\n" +
-          "💰 *Mantle Wallet*: Create or import a wallet with `/wallet` to enable autonomous yield strategies on Mantle.\n" +
-          "🤝 *Data Sharing*: Share your session context or tools with other users using `/grant`.\n\n" +
-          "Check `/help` for a full list of commands. How can I help you today?"
+          "welcome to auxloneo. i'm your edge-native assistant, living on cloudflare workers. fast, private, and autonomous.\n\n" +
+          "here is what i can do:\n" +
+          "- smart chat: just start typing. i can see images and docs.\n" +
+          "- custom ai: use /endpoint for your own providers or /model to switch brains.\n" +
+          "- persona: tweak how i act with /persona.\n" +
+          "- mantle wallet: /wallet lets me handle yield strategies on mantle for you.\n" +
+          "- data sharing: /grant lets you share context with others.\n\n" +
+          "check /help for the full list. what's on your mind?"
         );
         return;
 
