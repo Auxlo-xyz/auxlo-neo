@@ -46,9 +46,12 @@ export async function mantleRpc(
 
 async function remoteExec(command: string, env: Env): Promise<ToolResult> {
   const e = getEnv(env);
-  const executorUrl = e.EXECUTOR_URL;
+  let executorUrl = e.EXECUTOR_URL;
   if (!executorUrl) {
     return { content: "Remote executor not configured (EXECUTOR_URL missing).", error: true };
+  }
+  if (!executorUrl.endsWith("/exec")) {
+    executorUrl = executorUrl.replace(/\/+$/, "") + "/exec";
   }
 
   try {
