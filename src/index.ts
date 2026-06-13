@@ -1,6 +1,5 @@
 import type { Env, CustomProviderConfig } from "./types";
 import { handleTelegramWebhook, setTelegramWebhook, registerTelegramCommands } from "./channels/telegram";
-import { handleDiscordWebhook, registerDiscordCommands } from "./channels/discord";
 import { handleChatCompletions } from "./channels/api";
 import { listProviders } from "./providers";
 
@@ -94,20 +93,18 @@ export default {
             status: "online",
             capabilities: {
               cron_triggers: "*/5 * * * * (scan), 0 * * * * (cleanup)",
-              webhooks: ["telegram", "discord"],
+              webhooks: ["telegram"],
               event_driven: "available via Durable Objects",
             },
             endpoints: {
               chat: "POST /v1/chat/completions",
               telegram: "POST /telegram",
-              discord: "POST /discord",
               health: "GET /",
               providers: "GET /admin/providers",
               "add-provider": "POST /admin/providers",
               "delete-provider": "DELETE /admin/providers/:id",
               configure: "POST /admin/configure",
               "setup-telegram": "POST /admin/setup-telegram",
-              "setup-discord": "POST /admin/setup-discord",
               "scan-targets": "GET /admin/scan-targets",
               "add-scan-target": "POST /admin/scan-targets",
               "delete-scan-target": "DELETE /admin/scan-targets/:target",
@@ -129,11 +126,6 @@ export default {
       // Telegram webhook
       if (path === "/telegram" && method === "POST") {
         return handleTelegramWebhook(request, env, ctx);
-      }
-
-      // Discord webhook
-      if (path === "/discord" && method === "POST") {
-        return handleDiscordWebhook(request, env, ctx);
       }
 
       // ---- Admin endpoints (require API_KEY) ----
@@ -198,12 +190,6 @@ export default {
         const webhook = await setTelegramWebhook(env, url.origin);
         const commands = await registerTelegramCommands(env);
         return Response.json({ webhook, commands }, { headers: corsHeaders });
-      }
-
-      // Register discord commands
-      if (path === "/admin/setup-discord" && method === "POST") {
-        const result = await registerDiscordCommands(env);
-        return Response.json({ result }, { headers: corsHeaders });
       }
 
       // ---- Scan targets management (for periodic scanning) ----
