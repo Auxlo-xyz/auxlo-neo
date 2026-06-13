@@ -14,7 +14,7 @@ async function httpFetch(url: string): Promise<any> {
   return res.json();
 }
 
-async function mantleRpc(
+export async function mantleRpc(
   network: "mainnet" | "testnet",
   method: string,
   params: any[],

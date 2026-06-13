@@ -580,19 +580,26 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         const args = cmd.args.toLowerCase();
         if (args === "create") {
           await sendChatAction(env, chatId, "typing");
-          const genCmd = `node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
-          const { getSession, saveSession, createSession } = await import("../memory");
+          const genCmd = `node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); process.stdout.write(w.address + '\\n' + w.privateKey)"`;
           
-          // Use remoteExec to generate wallet
+          // Use remoteExec directly via the helper to avoid tool resolution overhead
           const { executeTool } = await import("../tools");
           const res = await executeTool(env, "remote_exec", { command: genCmd }, { channel: "telegram", sessionId });
           
-          if (res.error || !res.content) {
+          if (res.error || !res.content || res.content.trim() === "") {
+            console.error("Wallet gen failed:", res);
             await sendText(env, chatId, "Failed to generate wallet. Please try again.");
             return;
           }
           
-          const [address, privKey] = res.content.trim().split('\n');
+          const lines = res.content.trim().split('\n');
+          if (lines.length < 2) {
+            await sendText(env, chatId, "Wallet generation returned incomplete data. Please try again.");
+            return;
+          }
+          
+          const address = lines[0].trim();
+          const privKey = lines[1].trim();
           const encryptedKey = await encryptKey(privKey, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
           
           await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));

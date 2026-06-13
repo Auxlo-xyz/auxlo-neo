@@ -23,6 +23,7 @@ export interface Env {
   API_KEY?: string;
   EXECUTOR_URL?: string;
   MUSCLE_API_KEY?: string;
+  WALLET_ENCRYPTION_KEY?: string;
   
   // Cloudflare API token for cron management
   CLOUDFLARE_API_TOKEN?: string;
