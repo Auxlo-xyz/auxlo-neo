@@ -74,7 +74,7 @@ const BOT_COMMANDS = [
 // ---- Helpers ----
 
 function parseCommand(text: string): { command: string; args: string } | null {
-  const match = text.match(/^\/(\w+)(?:\s+(.*))?$/);
+  const match = text.match(/^\/(\w+)(?:@\w+)?(?:\s+(.*))?$/);
   if (!match) return null;
   return { command: match[1].toLowerCase(), args: match[2]?.trim() || "" };
 }
@@ -409,8 +409,13 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
 
   const chatId = msg.chat.id;
   const userId = `telegram:${msg.from.id.toString()}`; // Channel-prefixed for isolation
-  const text = msg.text;
+  let text = msg.text;
   const sessionId = `telegram:${chatId}`;
+
+  // Strip bot mention from the start of the message (e.g., "@AuxloNeo hello" -> "hello")
+  if (text.startsWith("@")) {
+    text = text.replace(/^@\w+\s*/, "").trim();
+  }
 
   // ---- Check if user is in endpoint wizard ----
   const wizard = await getWizardState(env, userId);
