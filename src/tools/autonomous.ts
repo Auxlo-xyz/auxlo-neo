@@ -649,10 +649,12 @@ async function agentHeartbeat(env: Env, args: Record<string, unknown>): Promise<
 }
 
 async function createWallet(env: Env, _args: Record<string, unknown>): Promise<ToolResult> {
-  const genCmd = `npm install ethers && node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
+  const genCmd = `node -e "const ethers = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
   const res = await remoteExec(genCmd, env);
   if (res.error || !res.content) return { content: `Wallet generation failed: ${res.content}`, error: true };
-  const [address, privKey] = res.content.trim().split('\\n');
+  const lines = res.content.trim().split('\n');
+  const address = lines[0];
+  const privKey = lines[1];
   return { content: `New Wallet Created.\nAddress: ${address}\nPrivate Key: ${privKey}\n\n⚠️ SAVE THIS KEY IMMEDIATELY!` };
 }
 
