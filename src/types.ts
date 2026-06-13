@@ -151,6 +151,15 @@ export interface UserWalletConfig {
   network: "mainnet" | "testnet";
 }
 
+export interface SessionGrant {
+  sessionKey: string; // Encrypted session key
+  expiresAt: number;
+  maxVolumeUsd: number;
+  currentVolumeUsd: number;
+  whitelistedContracts: string[];
+  ownerAddress: string;
+}
+
 export interface ProviderConfig {
   name: string;
   keyEnv: keyof Env;

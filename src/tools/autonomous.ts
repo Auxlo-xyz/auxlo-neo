@@ -362,20 +362,33 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>, ctx
   if (!userId) {
     return { content: "User identity not found. Cannot execute on-chain strategy without a linked wallet.", error: true };
   }
+
+  // 1. SESSION KEY CHECK (Phase 1: Non-Custodial Shift)
+  const { getSessionGrant } = await import("../memory");
+  const grant = await getSessionGrant(env, userId);
+  
+  if (!grant) {
+    return { content: "No active session grant found. Please authorize a session key first using /wallet grant.", error: true };
+  }
+
+  if (Date.now() > grant.expiresAt) {
+    return { content: "Session grant has expired. Please re-authorize.", error: true };
+  }
+
+  if (grant.currentVolumeUsd + maxAmountUsd > grant.maxVolumeUsd) {
+    return { content: `Transaction exceeds session volume limit. Current: $${grant.currentVolumeUsd}, Max: $${grant.maxVolumeUsd}`, error: true };
+  }
+
   const walletData = await env.CONFIG.get(`wallet:${userId}`, "json");
   if (!walletData) {
     return { content: "No Mantle wallet found for this user. Please use /wallet create first.", error: true };
   }
-  const { encryptedKey } = walletData as any;
-  if (!encryptedKey) {
-    return { content: "Wallet found but private key is missing.", error: true };
-  }
   
-  // Decrypt the user's private key
+  // Use the Session Key instead of the Master Key
   const decryptionSecret = env.WALLET_ENCRYPTION_KEY || "fallback-secret";
-  const privateKey = await decryptUserKey(encryptedKey, decryptionSecret);
-  if (!privateKey) {
-    return { content: "Failed to decrypt user wallet key.", error: true };
+  const sessionPrivateKey = await decryptUserKey(grant.sessionKey, decryptionSecret);
+  if (!sessionPrivateKey) {
+    return { content: "Failed to decrypt session wallet key.", error: true };
   }
 
   // Map strategy to router
@@ -449,6 +462,10 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>, ctx
 
   const match = (result.content || "").match(/TX_HASH:(0x[a-fA-F0-9]+)/);
   if (match) {
+    // Update volume usage
+    const { updateSessionVolume } = await import("../memory");
+    await updateSessionVolume(env, userId, maxAmountUsd);
+
     return { 
       content: `Successfully executed ${strategy} strategy on Mantle ${network}!\n` +
                `Router: ${router}\n` +
@@ -734,7 +751,28 @@ async function importWallet(env: Env, args: Record<string, unknown>, ctx?: ToolC
   
   const encryptedKey = await decryptUserKey(key, env.WALLET_ENCRYPTION_KEY || "fallback-secret", true);
   await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
-  return { content: `Wallet imported successfully!\n\nAddress: \`${address}\`` };
+  
+  // Automatically generate a default session grant for new imports (Optional, but better UX)
+  const sessionKey = await generateSessionKey(address, env);
+  const encryptedSessionKey = await decryptUserKey(sessionKey, env.WALLET_ENCRYPTION_KEY || "fallback-secret", true);
+  
+  const { saveSessionGrant } = await import("../memory");
+  await saveSessionGrant(env, userId, {
+    sessionKey: encryptedSessionKey,
+    expiresAt: Date.now() + (24 * 60 * 60 * 1000), // 24h
+    maxVolumeUsd: 1000,
+    currentVolumeUsd: 0,
+    whitelistedContracts: [], // Logic for auto-whitelisting routers could go here
+    ownerAddress: address,
+  });
+
+  return { content: `Wallet imported successfully!\n\nAddress: \`${address}\`\n\nA default 24h session grant has been created with a $1,000 limit.` };
+}
+
+async function generateSessionKey(address: string, env: Env): Promise<string> {
+  const cmd = `node -e "const { ethers } = require('ethers'); const wallet = ethers.Wallet.createRandom(); console.log(wallet.privateKey)"`;
+  const res = await remoteExec(cmd, env);
+  return res.content.trim();
 }
 
 async function walletStatus(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {

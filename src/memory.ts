@@ -1,5 +1,5 @@
 import type { KVNamespace } from "@cloudflare/workers-types";
-import type { Env, SessionState, Message } from "./types";
+import type { Env, SessionState, Message, SessionGrant } from "./types";
 
 const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
 const MAX_MESSAGES = 50;
@@ -221,4 +221,21 @@ export async function revokeAccess(env: Env, grantId: string): Promise<boolean> 
   
   await env.CONFIG.delete(`grant:${grantId}`);
   return true;
+}
+
+export async function saveSessionGrant(env: Env, userId: string, grant: SessionGrant): Promise<void> {
+  await env.CONFIG.put(`grant_session:${userId}`, JSON.stringify(grant));
+}
+
+export async function getSessionGrant(env: Env, userId: string): Promise<SessionGrant | null> {
+  const raw = await env.CONFIG.get(`grant_session:${userId}`, "json");
+  return raw as SessionGrant | null;
+}
+
+export async function updateSessionVolume(env: Env, userId: string, amountUsd: number): Promise<void> {
+  const grant = await getSessionGrant(env, userId);
+  if (grant) {
+    grant.currentVolumeUsd += amountUsd;
+    await saveSessionGrant(env, userId, grant);
+  }
 }
