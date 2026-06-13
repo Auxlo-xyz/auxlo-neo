@@ -44,6 +44,14 @@ interface EndpointWizardState {
   started_at: number;
 }
 
+interface WalletWizardState {
+  step: "confirm_save";
+  wallet_details: string;
+  address: string;
+  encrypted_key: string;
+  started_at: number;
+}
+
 // ---- Bot commands for menu ----
 
 const BOT_COMMANDS = [
@@ -57,6 +65,7 @@ const BOT_COMMANDS = [
   { command: "status", description: "Show current session info" },
   { command: "endpoints", description: "List saved endpoints" },
   { command: "usage", description: "Show token usage stats" },
+  { command: "wallet", description: "Manage your Mantle wallet" },
   { command: "grant", description: "Share your data with another user" },
   { command: "revoke", description: "Revoke data sharing" },
   { command: "shares", description: "List your shared resources" },
@@ -110,6 +119,29 @@ async function sendText(env: Env, chatId: number, text: string, replyMarkup?: Re
       await tgApi(env, "sendMessage", body);
     }
   }
+}
+
+async function encryptKey(plainText: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret.padEnd(32, '0').slice(0, 32));
+  const key = await crypto.subtle.importKey("raw", keyData, "AES-GCM", false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(plainText));
+  const combined = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(encrypted), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptKey(cipherText: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret.padEnd(32, '0').slice(0, 32));
+  const key = await crypto.subtle.importKey("raw", keyData, "AES-GCM", false, ["decrypt"]);
+  const combined = new Uint8Array(atob(cipherText).split("").map(c => c.charCodeAt(0)));
+  const iv = combined.slice(0, 12);
+  const data = combined.slice(12);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+  return new TextDecoder().decode(decrypted);
 }
 
 async function editText(env: Env, chatId: number, messageId: number, text: string, replyMarkup?: Record<string, unknown>): Promise<void> {
@@ -353,6 +385,20 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     return;
   }
 
+  // ---- Wallet confirmation ----
+  if (data === "wallet_confirm_save") {
+    const msgId = await env.CONFIG.get(`wallet_msg:${userId}`);
+    if (msgId) {
+      await tgApi(env, "deleteMessage", { chat_id: chatId, message_id: parseInt(msgId) });
+      await env.CONFIG.delete(`wallet_msg:${userId}`);
+    }
+    await answerCallback(env, cb.id, "Key secured!");
+    if (messageId) {
+      await editText(env, chatId, messageId, "✅ Wallet key saved and deleted from chat for your security.");
+    }
+    return;
+  }
+
   await answerCallback(env, cb.id);
 }
 
@@ -528,6 +574,85 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           `Since: ${since}`
         );
         return;
+      }
+
+      case "wallet": {
+        const args = cmd.args.toLowerCase();
+        if (args === "create") {
+          await sendChatAction(env, chatId, "typing");
+          const genCmd = `node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
+          const { getSession, saveSession, createSession } = await import("../memory");
+          
+          // Use remoteExec to generate wallet
+          const { executeTool } = await import("../tools");
+          const res = await executeTool(env, "remote_exec", { command: genCmd }, { channel: "telegram", sessionId });
+          
+          if (res.error || !res.content) {
+            await sendText(env, chatId, "Failed to generate wallet. Please try again.");
+            return;
+          }
+          
+          const [address, privKey] = res.content.trim().split('\n');
+          const encryptedKey = await encryptKey(privKey, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
+          
+          await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
+          
+          const details = `*New Mantle Wallet Generated*\n\n` +
+                           `Address: \`${address}\`\n` +
+                           `Private Key: \`${privKey}\`\n\n` +
+                           `⚠️ *CRITICAL*: Save this key immediately in a safe place. I will delete this message once you confirm you've saved it. I cannot recover this key for you.`;
+          
+          const msg = await tgApi(env, "sendMessage", { 
+            chat_id: chatId, 
+            text: details, 
+            parse_mode: "MarkdownV2",
+            reply_markup: {
+              inline_keyboard: [[{ text: "✅ I've saved it", callback_data: "wallet_confirm_save" }]]
+            }
+          });
+          
+          // Save message ID for deletion
+          await env.CONFIG.put(`wallet_msg:${userId}`, (msg as any).result.message_id.toString());
+          return;
+        } else if (args === "status") {
+          const walletData = await env.CONFIG.get(`wallet:${userId}`, "json");
+          if (!walletData) {
+            await sendText(env, chatId, "No wallet found. Use /wallet create to generate one.");
+            return;
+          }
+          const { address } = walletData as any;
+          const { mantleRpc } = await import("../tools/autonomous");
+          const balHex = await mantleRpc("mainnet", "eth_getBalance", [address, "latest"], env);
+          const mnt = Number(BigInt(balHex || "0x0")) / 1e18;
+          
+          await sendText(env, chatId, `*Wallet Status*\n\nAddress: \`${address}\`\nBalance: ${mnt.toFixed(4)} MNT`);
+          return;
+        } else if (args.startsWith("import ")) {
+          const key = args.slice(7).trim();
+          if (!key.startsWith("0x")) {
+            await sendText(env, chatId, "Invalid private key format. Must start with 0x.");
+            return;
+          }
+          const encryptedKey = await encryptKey(key, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
+          
+          // Use remoteExec to verify key and get address
+          const verifyCmd = `node -e "const { ethers } = require('ethers'); console.log(new ethers.Wallet('${key}').address)"`;
+          const { executeTool } = await import("../tools");
+          const res = await executeTool(env, "remote_exec", { command: verifyCmd }, { channel: "telegram", sessionId });
+          
+          if (res.error || !res.content) {
+            await sendText(env, chatId, "Invalid private key. Import failed.");
+            return;
+          }
+          
+          const address = res.content.trim();
+          await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
+          await sendText(env, chatId, `Wallet imported successfully!\n\nAddress: \`${address}\``);
+          return;
+        } else {
+          await sendText(env, chatId, "Wallet management:\n/wallet create - Generate new wallet\n/wallet import <key> - Import existing key\n/wallet status - Check balance");
+          return;
+        }
       }
 
       case "grant": {

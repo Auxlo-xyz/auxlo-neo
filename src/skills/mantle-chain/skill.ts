@@ -74,6 +74,7 @@ export function buildMantleChainToolDefinitions(): ToolDefinition[] {
           properties: {
             signed_tx: { type: "string", description: "Signed raw transaction hex (0x...)" },
             network: { type: "string", enum: ["mainnet", "testnet"] },
+            private_mode: { type: "boolean", description: "If true, send via private RPC to avoid public mempool MEV" },
           },
           required: ["signed_tx", "network"],
         },
@@ -143,7 +144,10 @@ export async function executeMantleChainTool(
   const explorerMainnet = "https://mantlescan.xyz";
   const explorerTestnet = "https://testnet.mantlescan.xyz";
 
-  function rpc(network: string): string {
+  function rpc(network: string, privateMode: boolean = false): string {
+    if (privateMode) {
+      return anyEnv.MANTLE_PRIVATE_RPC || rpcMainnet;
+    }
     return network === "mainnet" ? rpcMainnet : rpcTestnet;
   }
   function explorer(network: string): string {
@@ -244,7 +248,8 @@ export async function executeMantleChainTool(
       case "mantle_send_transaction": {
         const signed_tx = args.signed_tx as string;
         const network = args.network as string;
-        const endpoint = rpc(network);
+        const privateMode = (args.private_mode as boolean) || false;
+        const endpoint = rpc(network, privateMode);
         const payload = {
           jsonrpc: "2.0",
           method: "eth_sendRawTransaction",

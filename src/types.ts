@@ -126,6 +126,14 @@ export interface CustomProviderConfig {
   type: "openai" | "anthropic" | "google";
 }
 
+export interface UserWalletConfig {
+  address: string;
+  encrypted_key: string;
+  created_at: number;
+  last_used: number;
+  network: "mainnet" | "testnet";
+}
+
 export interface ProviderConfig {
   name: string;
   keyEnv: keyof Env;
