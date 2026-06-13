@@ -22,11 +22,19 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
   - `remote_exec` (Full CLI access: git, npm, python, ffmpeg, etc.)
   - `send_message` (Progress updates)
   - `current_time` (UTC timestamp)
-  - **Mantle Autonomous Tools**: `mantle_scan_opportunities`, `mantle_execute_yield_strategy`, `mantle_monitor_positions`, `mantle_auto_rebalance`, `mantle_publish_agent_state`, `mantle_agent_heartbeat`
-- **Session memory** via Cloudflare KV (7-day TTL)
-- **Tool calling loop** (up to 8 rounds per request)
-- **Streaming** support for OpenAI-compatible API
-- **Admin config** via KV (persona, model, temperature)
+
+## 🤖 Mantle Network Autonomous Agent
+
+AuxloNeo is now equipped with a fully autonomous on-chain suite for the **Mantle Network**. It doesn't just chat; it operates.
+
+**What it can do for you on Mantle:**
+- **Live Opportunity Scanning**: Automatically scans Mantle DeFi pools (via DefiLlama) to find the best yields.
+- **Autonomous Strategy Execution**: Deploys yield strategies and executes swaps using real on-chain tools.
+- **Portfolio Monitoring**: Tracks your positions in real-time and claims rewards automatically.
+- **Auto-Rebalancing**: Shifts assets between protocols to optimize returns based on live data.
+- **Transparency**: Publishes its current agent state and heartbeat to Mantle Data Streams.
+
+*Designed for the Mantle Turing Test Hackathon.*
 
 ## Architecture
 
