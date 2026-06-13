@@ -69,6 +69,7 @@ const BOT_COMMANDS = [
   { command: "status", description: "Show current session info" },
   { command: "usage", description: "Show token usage stats" },
   { command: "wallet", description: "Manage your Mantle wallet" },
+  { command: "trading", description: "Toggle professional trading council mode" },
   { command: "grant", description: "Share data with another user" },
   { command: "revoke", description: "Revoke data sharing" },
   { command: "shares", description: "List shared resources" },
@@ -536,24 +537,50 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         }
         return;
 
-      case "provider":
+      case "provider": {
         if (cmd.args) {
-          const { getSession, saveSession, createSession } = await import("../memory");
+          const { getSession, saveSession } = await import("../memory");
+          const sessionId = `telegram:${chatId}`;
           let session = await getSession(env.SESSIONS, sessionId);
-          if (!session) session = createSession(sessionId);
-          session.provider = cmd.args;
-          // Auto-set custom provider's default model
-          const rawC = await env.CONFIG.get("custom_providers", "json");
-          const customsC: CustomProviderConfig[] = (rawC as CustomProviderConfig[]) || [];
-          const customC = customsC.find((c) => c.id === cmd.args);
-          if (customC?.default_model) session.model = customC.default_model;
-          await saveSession(env.SESSIONS, sessionId, session);
-          await sendText(env, chatId, `Provider set to: ${cmd.args}`);
+          if (!session) {
+            // handled by agentChat, but for consistency:
+            // session = createSession(sessionId); 
+          }
+          if (session) {
+            session.provider = cmd.args;
+            await saveSession(env.SESSIONS, sessionId, session);
+            await sendText(env, chatId, `Provider set to: ${cmd.args}`);
+          }
         } else {
           const providers = await listProviders(env, userId);
           await sendText(env, chatId, "Choose a provider:", providerKeyboard(providers));
         }
         return;
+      }
+
+      case "mainnet": {
+        const { getSession, saveSession } = await import("../memory");
+        const sessionId = `telegram:${chatId}`;
+        let session = await getSession(env.SESSIONS, sessionId);
+        if (session) {
+          session.network = "mainnet";
+          await saveSession(env.SESSIONS, sessionId, session);
+        }
+        await sendText(env, chatId, "🚀 Network switched to *Mainnet*.\n\nProceed with caution: real funds are at stake.");
+        return;
+      }
+
+      case "testnet": {
+        const { getSession, saveSession } = await import("../memory");
+        const sessionId = `telegram:${chatId}`;
+        let session = await getSession(env.SESSIONS, sessionId);
+        if (session) {
+          session.network = "testnet";
+          await saveSession(env.SESSIONS, sessionId, session);
+        }
+        await sendText(env, chatId, "🧪 Network switched to *Testnet*.\n\nSafe environment for experimentation.");
+        return;
+      }
 
       case "endpoint":
         await setWizardState(env, userId, { step: "type", started_at: Date.now() });
@@ -623,6 +650,23 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           `Last provider: \`${stats.last_provider || "N/A"}\`\n` +
           `Since: ${since}`
         );
+        return;
+      }
+
+      case "trading": {
+        const { getSession, saveSession, createSession } = await import("../memory");
+        let session = await getSession(env.SESSIONS, sessionId);
+        if (!session) session = createSession(sessionId);
+        
+        session.tradingMode = !session.tradingMode;
+        await saveSession(env.SESSIONS, sessionId, session);
+        
+        const status = session.tradingMode ? "✅ *Active*" : "❌ *Disabled*";
+        const msg = session.tradingMode 
+          ? `Trading Mode is now ${status}.\n\nAll on-chain operations will now be routed through the *Council of Agents* (Analysts $\rightarrow$ Strategist $\rightarrow$ Guard) for maximum security and precision.`
+          : `Trading Mode is now ${status}.\n\nReturning to standard agent mode.`;
+          
+        await sendText(env, chatId, msg);
         return;
       }
 

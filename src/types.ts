@@ -63,6 +63,7 @@ export interface ToolContext {
   channel?: string;
   sessionId?: string;
   userId?: string;
+  network?: "mainnet" | "testnet";
 }
 
 export interface ToolResult {
@@ -92,6 +93,8 @@ export interface SessionState {
   model?: string;
   provider?: string;
   systemPrompt?: string;
+  network?: "mainnet" | "testnet";
+  tradingMode?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -149,6 +152,13 @@ export interface UserWalletConfig {
   created_at: number;
   last_used: number;
   network: "mainnet" | "testnet";
+}
+
+export interface RiskLimits {
+  max_trade_value_usd: number;
+  max_slippage_pct: number;
+  max_portfolio_exposure_pct: number;
+  allowed_protocols: string[];
 }
 
 export interface SessionGrant {

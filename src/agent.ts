@@ -10,6 +10,59 @@ import { listSkills } from "./skills";
 const MAX_TOOL_ROUNDS = 8;
 const PROGRESS_NUDGE_INTERVAL = 5; // Nudge every 5 tool calls
 
+// --- Trading Council Orchestration ---
+async function runTradingCouncil(env: Env, req: AgentRequest, session: any, toolCtx: any): Promise<string> {
+  const preferredProvider = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
+  const preferredModel = req.model || session.model || env.DEFAULT_MODEL || "gpt-4o-mini";
+
+  // 1. Analysts (x3) - Diverse perspectives using the user's chosen model
+  const analystPrompts = [
+    "Analyst Alpha (Aggressive): Focus on high-yield opportunities and momentum. Be bold but data-driven.",
+    "Analyst Beta (Conservative): Focus on risk mitigation and TVL stability. Be cautious.",
+    "Analyst Gamma (Balanced): Focus on a mix of yield and safety. Provide a neutral perspective."
+  ];
+
+  const analystResults = await Promise.all(analystPrompts.map(async (p) => {
+    try {
+      const res = await callProvider(env, preferredProvider, {
+        messages: [
+          { role: "system", content: `You are a DeFi Analyst. ${p}` },
+          { role: "user", content: `Analyze this request and provide a specific trading signal for Mantle: ${req.message}` }
+        ],
+        model: preferredModel,
+      });
+      return `[Analyst] ${res.content || "No signal generated."}`;
+    } catch (e) {
+      return `[Analyst] Error generating signal: ${e}`;
+    }
+  }));
+
+  // 2. Strategist - Synthesizing signals into a plan
+  const strategistRes = await callProvider(env, preferredProvider, {
+    messages: [
+      { role: "system", content: "You are the Lead Strategist. Your job is to synthesize multiple analyst signals into one concrete, executable trading plan. Be precise about tokens, amounts, and routers." },
+      { role: "user", content: `Original Request: ${req.message}\n\nAnalyst Signals:\n${analystResults.join("\n")}` }
+    ],
+    model: preferredModel,
+  });
+  const plan = strategistRes.content || "Failed to create a plan.";
+
+  // 3. Guard - Final Risk Audit
+  const guardRes = await callProvider(env, preferredProvider, {
+    messages: [
+      { role: "system", content: "You are the Risk Guard. Your sole job is to audit the trading plan for security risks, slippage, and protocol safety. You must either 'APPROVE' or 'REJECT' the plan. If you reject, explain why." },
+      { role: "user", content: `Trading Plan: ${plan}` }
+    ],
+    model: preferredModel,
+  });
+
+  if (guardRes.content?.toLowerCase().includes("reject")) {
+    return `❌ *Trade Rejected by Guard*\n\nReason: ${guardRes.content}`;
+  }
+
+  return `✅ *Trade Approved by Council*\n\nStrategist Plan: ${plan}\n\nGuard Audit: ${guardRes.content}`;
+}
+
 const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a living agent on Cloudflare Workers. You are not a general agent or chatbot.
 Current Year: 2026.
 
@@ -23,7 +76,9 @@ You are a multimodal AI. You can see and analyze images and documents sent by th
 To avoid providing false information or defaulting to previous years (e.g., 2025), you MUST use the \`current_time\` tool whenever the current date, day of the week, or exact time is relevant to the conversation. Never guess the date.
 
 ## MANTLE YIELD STRATEGIST OPERATIONAL PROTOCOL
-When acting as a Mantle Autonomous Agent, you operate under a strict execution pipeline to maximize yield and eliminate MEV risk.
+**STRICT REQUIREMENT**: You are FORBIDDEN from executing autonomous yield strategies or complex portfolio rebalancing unless Trading Mode is active. However, simple, direct token swaps are permitted without Trading Mode. If a user asks for a complex strategy and Trading Mode is off, you must politely direct them to use the `/trading` command to activate the Trading Council.
+
+When Trading Mode is active, you operate under a strict execution pipeline to maximize yield and eliminate MEV risk.
 
 1. HEARTBEAT: Always start a session or a new cycle with \`mantle_agent_heartbeat\`. Verify wallet balance and RPC connectivity before any action.
 2. SCAN: Use \`mantle_scan_opportunities\` to identify high-yield pools. Filter by APR and TVL.
@@ -83,7 +138,11 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   // Resolve identity and channel first (needed for provider resolution and tools)
   const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
   const userId = req.userId || (sessionId.includes(":") ? sessionId : undefined);
-  const toolCtx = { channel, sessionId, userId };
+  
+  // Initial session load for preference extraction
+  const initialSession = await getSession(env.SESSIONS, sessionId);
+  const network: string = initialSession?.network || "testnet";
+  const toolCtx = { channel, sessionId, userId, network };
 
   // Use RLS-protected session getter to enforce user isolation
   let session = userId 
@@ -174,6 +233,23 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   ];
 
   const toolDefs = await getToolDefinitions(env, toolCtx);
+
+  // ---- Trading Council Mode Interception ----
+  if (session.tradingMode && (req.message.toLowerCase().includes("trade") || req.message.toLowerCase().includes("swap") || req.message.toLowerCase().includes("invest"))) {
+    const councilResult = await runTradingCouncil(env, req, session, toolCtx);
+    
+    // Add the council's reasoning to the conversation
+    addMessage(session, { role: "assistant", content: councilResult });
+    
+    // Return the result immediately to the user
+    session.updatedAt = Date.now();
+    await saveSession(env.SESSIONS, sessionId, session);
+    return {
+      content: councilResult,
+      model: "trading-council",
+      session_id: sessionId,
+    };
+  }
 
   let round = 0;
   let totalToolCallsCount = 0; // Track total tool calls across rounds
