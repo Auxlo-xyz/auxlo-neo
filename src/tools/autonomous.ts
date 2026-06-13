@@ -203,7 +203,7 @@ export function getAutonomousToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "mantle_wallet_create",
-        description: "Generate a new Mantle wallet. Returns the address and private key (ONE-TIME).",
+        description: "Generate a new Mantle wallet using the native Muscle Wallet API. Returns the address and private key (ONE-TIME).",
         parameters: { type: "object", properties: {} },
       },
     },
@@ -239,28 +239,29 @@ export function getAutonomousToolDefinitions(): ToolDefinition[] {
 export async function executeAutonomousTool(
   env: Env,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  ctx?: ToolContext
 ): Promise<ToolResult> {
   try {
     switch (name) {
       case "mantle_scan_opportunities":
         return await scanOpportunities(env, args);
       case "mantle_execute_yield_strategy":
-        return await executeYieldStrategy(env, args);
+        return await executeYieldStrategy(env, args, ctx);
       case "mantle_monitor_positions":
-        return await monitorPositions(env, args);
+        return await monitorPositions(env, args, ctx);
       case "mantle_auto_rebalance":
-        return await autoRebalance(env, args);
+        return await autoRebalance(env, args, ctx);
       case "mantle_publish_agent_state":
         return await publishAgentState(env, args);
       case "mantle_agent_heartbeat":
-        return await agentHeartbeat(env, args);
+        return await agentHeartbeat(env, args, ctx);
       case "mantle_wallet_create":
-        return await createWallet(env, args);
+        return await createWallet(env, args, ctx);
       case "mantle_wallet_import":
-        return await importWallet(env, args);
+        return await importWallet(env, args, ctx);
       case "mantle_wallet_status":
-        return await walletStatus(env, args);
+        return await walletStatus(env, args, ctx);
       default:
         return { content: `Unknown autonomous tool: ${name}`, error: true };
     }
@@ -346,7 +347,7 @@ const MNT_ADDRESS = "0x0000000000000000000000000000000000000000";
 const USDC_ADDRESS_MAINNET = "0x09Bc4E0D864854c6aF6C71AC4eD4c1b3C2D25E4c";
 const USDC_ADDRESS_TESTNET = "0xB8255fE3a7f65AfC1d877831Fa9F82E0B5f514D1";
 
-async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
+async function executeYieldStrategy(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
   const strategy = (args.strategy as string) || "balanced";
   const maxAmountUsd = (args.max_amount_usd as number) || 100;
   const tokenIn = (args.token_in as string) || "USDC";
@@ -355,9 +356,26 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
   const privateMode = (args.private_mode as boolean) || false;
 
   const e = getEnv(env);
-  const privateKey = e.MANTLE_PRIVATE_KEY;
+  
+  // USER-SPECIFIC WALLET LOOKUP
+  const userId = ctx?.userId;
+  if (!userId) {
+    return { content: "User identity not found. Cannot execute on-chain strategy without a linked wallet.", error: true };
+  }
+  const walletData = await env.CONFIG.get(`wallet:${userId}`, "json");
+  if (!walletData) {
+    return { content: "No Mantle wallet found for this user. Please use /wallet create first.", error: true };
+  }
+  const { encryptedKey } = walletData as any;
+  if (!encryptedKey) {
+    return { content: "Wallet found but private key is missing.", error: true };
+  }
+  
+  // Decrypt the user's private key
+  const decryptionSecret = env.WALLET_ENCRYPTION_KEY || "fallback-secret";
+  const privateKey = await decryptUserKey(encryptedKey, decryptionSecret);
   if (!privateKey) {
-    return { content: "MANTLE_PRIVATE_KEY not configured in secrets.", error: true };
+    return { content: "Failed to decrypt user wallet key.", error: true };
   }
 
   // Map strategy to router
@@ -446,12 +464,12 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
 /*  mantle_monitor_positions — real RPC + optional Muscle query        */
 /* ================================================================== */
 
-async function monitorPositions(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
-  const wallet = (args.wallet as string) || "";
+async function monitorPositions(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
+  const wallet = (args.wallet as string) || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
   const network = (args.network as "mainnet" | "testnet") || "mainnet";
 
-  if (!wallet.startsWith("0x")) {
-    return { content: "wallet must be a 0x address", error: true };
+  if (!wallet || !wallet.startsWith("0x")) {
+    return { content: "No wallet address provided and no linked wallet found for this user.", error: true };
   }
 
   try {
@@ -510,22 +528,35 @@ EOF`,
 /*  mantle_auto_rebalance — skeleton (real tx flow, manual ABI fill)   */
 /* ================================================================== */
 
-async function autoRebalance(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
-  const wallet = (args.wallet as string) || "";
+async function autoRebalance(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
+  const wallet = (args.wallet as string) || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
   const targetAlloc = (args.target_allocation as Record<string, number>) || {};
   const network = (args.network as "mainnet" | "testnet") || "mainnet";
 
-  if (!wallet.startsWith("0x")) {
-    return { content: "wallet must be a 0x address", error: true };
+  if (!wallet || !wallet.startsWith("0x")) {
+    return { content: "No wallet address provided and no linked wallet found for this user.", error: true };
   }
   if (Object.keys(targetAlloc).length === 0) {
     return { content: "target_allocation must not be empty", error: true };
   }
 
   const e = getEnv(env);
-  const privateKey = e.MANTLE_PRIVATE_KEY;
+  
+  // USER-SPECIFIC WALLET LOOKUP
+  const userId = ctx?.userId;
+  if (!userId) {
+    return { content: "User identity not found. Cannot rebalance without a linked wallet.", error: true };
+  }
+  const walletData = await env.CONFIG.get(`wallet:${userId}`, "json");
+  if (!walletData) {
+    return { content: "No Mantle wallet found for this user.", error: true };
+  }
+  const { encryptedKey } = walletData as any;
+  
+  const decryptionSecret = env.WALLET_ENCRYPTION_KEY || "fallback-secret";
+  const privateKey = await decryptUserKey(encryptedKey, decryptionSecret);
   if (!privateKey) {
-    return { content: "MANTLE_PRIVATE_KEY not configured in secrets.", error: true };
+    return { content: "Failed to decrypt user wallet key.", error: true };
   }
 
   const rpcUrl = network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz';
@@ -613,12 +644,12 @@ async function publishAgentState(env: Env, args: Record<string, unknown>): Promi
 /*  mantle_agent_heartbeat — real RPC checks                           */
 /* ================================================================== */
 
-async function agentHeartbeat(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
-  const wallet = (args.wallet as string) || "";
+async function agentHeartbeat(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
+  const wallet = (args.wallet as string) || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
   const network = (args.network as "mainnet" | "testnet") || "mainnet";
 
-  if (!wallet.startsWith("0x")) {
-    return { content: "wallet must be a 0x address", error: true };
+  if (!wallet || !wallet.startsWith("0x")) {
+    return { content: "No wallet address provided and no linked wallet found for this user.", error: true };
   }
 
   try {
@@ -648,27 +679,87 @@ async function agentHeartbeat(env: Env, args: Record<string, unknown>): Promise<
   }
 }
 
-async function createWallet(env: Env, _args: Record<string, unknown>): Promise<ToolResult> {
-  const genCmd = `node -e "const ethers = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
-  const res = await remoteExec(genCmd, env);
-  if (res.error || !res.content) return { content: `Wallet generation failed: ${res.content}`, error: true };
-  const lines = res.content.trim().split('\n');
-  const address = lines[0];
-  const privKey = lines[1];
-  return { content: `New Wallet Created.\nAddress: ${address}\nPrivate Key: ${privKey}\n\n⚠️ SAVE THIS KEY IMMEDIATELY!` };
+async function createWallet(env: Env, _args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
+  const e = getEnv(env);
+  
+  // Use userId from context for the session ID if available
+  const workspaceId = ctx?.userId || "default_workspace";
+  
+  let executorUrl = e.EXECUTOR_URL || 'https://auxlo-muscle.vercel.app/exec';
+  
+  // Ensure we hit /wallet instead of /exec
+  const walletUrl = executorUrl.endsWith('/exec') 
+    ? executorUrl.replace(/\/exec$/, '/wallet') 
+    : (executorUrl.endsWith('/') ? executorUrl.slice(0, -1) + '/wallet' : executorUrl + '/wallet');
+  
+  try {
+    const response = await fetch(walletUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: e.MUSCLE_API_KEY,
+      }),
+    });
+
+    if (!response.ok) {
+      return { content: `Wallet API error: HTTP ${response.status}`, error: true };
+    }
+
+    const data = await response.json();
+    if (!data.address || !data.privateKey) {
+      return { content: `Wallet API returned incomplete data: ${JSON.stringify(data)}`, error: true };
+    }
+
+    return { 
+      content: `New Wallet Created.\nAddress: ${data.address}\nPrivate Key: ${data.privateKey}\n\n⚠️ SAVE THIS KEY IMMEDIATELY!`, 
+      error: false 
+    };
+  } catch (err: any) {
+    return { content: `Wallet generation failed: ${err.message}`, error: true };
+  }
 }
 
-async function importWallet(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
+async function importWallet(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
   const key = args.private_key as string;
   if (!key || !key.startsWith("0x")) return { content: "Invalid private key. Must start with 0x.", error: true };
   const verifyCmd = `node -e "const { ethers } = require('ethers'); console.log(new ethers.Wallet('${key}').address)"`;
   const res = await remoteExec(verifyCmd, env);
   if (res.error || !res.content) return { content: "Invalid private key. Import failed.", error: true };
-  return { content: `Wallet imported successfully! Address: ${res.content.trim()}` };
+  
+  const address = res.content.trim();
+  const userId = ctx?.userId;
+  if (!userId) {
+    return { content: `Wallet verified (Address: ${address}), but userId not found. Please use /wallet import within a session.`, error: true };
+  }
+  
+  const encryptedKey = await decryptUserKey(key, env.WALLET_ENCRYPTION_KEY || "fallback-secret", true);
+  await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
+  return { content: `Wallet imported successfully!\n\nAddress: \`${address}\`` };
 }
 
-async function walletStatus(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
-  const wallet = args.wallet as string;
-  if (!wallet || !wallet.startsWith("0x")) return { content: "Invalid wallet address.", error: true };
-  return await agentHeartbeat(env, { wallet, network: "mainnet" });
+async function walletStatus(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
+  const wallet = args.wallet as string || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
+  if (!wallet || !wallet.startsWith("0x")) return { content: "No wallet found for this user. Use /wallet create to generate one.", error: true };
+  return await agentHeartbeat(env, { wallet, network: "mainnet" }, ctx);
+}
+
+async function decryptUserKey(cipherText: string, secret: string, encrypt = false): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret.padEnd(32, '0').slice(0, 32));
+  const key = await crypto.subtle.importKey("raw", keyData, "AES-GCM", false, encrypt ? ["encrypt"] : ["decrypt"]);
+  
+  if (encrypt) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(cipherText));
+    const combined = new Uint8Array(iv.length + encrypted.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(encrypted), iv.length);
+    return btoa(String.fromCharCode(...combined));
+  } else {
+    const combined = new Uint8Array(atob(cipherText).split("").map(c => c.charCodeAt(0)));
+    const iv = combined.slice(0, 12);
+    const data = combined.slice(12);
+    const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+    return new TextDecoder().decode(decrypted);
+  }
 }

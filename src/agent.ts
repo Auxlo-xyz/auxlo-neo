@@ -109,7 +109,8 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
 
   // Extract channel context from session ID
   const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
-  const toolCtx = { channel, sessionId };
+  const userId = req.userId || (sessionId.split(":")[1]) || undefined;
+  const toolCtx = { channel, sessionId, userId };
 
   // Add user message
   const userMessage: Message = { role: "user", content: req.message };
@@ -129,10 +130,20 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     ? `${systemPrompt}\n\n---\nThings you remember about this user:\n${memoryContext}`
     : systemPrompt;
 
+  // Wallet Context: Check if user has a Mantle wallet
+  let walletContext = "";
+  if (userId) {
+    const walletData = await env.CONFIG.get(`wallet:${userId}`, "json");
+    if (walletData) {
+      const wallet = walletData as { address: string };
+      walletContext = `\n\n---\nUSER WALLET: This user has a Mantle wallet linked: \`${wallet.address}\`. You can now use on-chain tools for them.`;
+    }
+  }
+
   const skills = await listSkills(env);
   const skillTitles = skills.map(s => s.id).join(", ");
   const skillSection = skillTitles ? `\n\nAvailable Skills (use \`use_skill\` to load, \`register_skill\` to add, \`unregister_skill\` to remove):\n${skillTitles}` : "";
-const finalSystemPrompt = `${fullSystem}${skillSection}\n\nCurrently running on model: ${model} via ${providerDisplayName}.`;
+const finalSystemPrompt = `${fullSystem}${walletContext}${skillSection}\n\nCurrently running on model: ${model} via ${providerDisplayName}.`;
 
   const messages: Message[] = [
     { role: "system", content: finalSystemPrompt },

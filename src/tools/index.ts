@@ -129,7 +129,7 @@ export async function getToolDefinitions(env: Env, ctx?: ToolContext): Promise<T
       type: "function",
       function: {
         name: "remote_exec",
-        description: "Execute a shell command in a remote ephemeral Linux environment (Vercel Fluid Compute). Supports git, npm, python, ffmpeg, etc. Use this for repo analysis, builds, and automation.",
+        description: "Execute a shell command in a remote ephemeral Linux environment (Vercel Fluid Compute). Supports git, npm, python, ffmpeg, etc. Use this for repo analysis, builds, and automation. NEVER use this for wallet creation; use 'mantle_wallet_create' instead.",
         parameters: {
           type: "object",
           properties: {
@@ -247,13 +247,22 @@ export async function executeTool(
       case "byreal_swap_execute":
       case "byreal_wallet_balance":
         return await executeByrealTool(env, name, args);
-      case "mantle_scan_opportunities":
- case "mantle_execute_yield_strategy":
- case "mantle_monitor_positions":
- case "mantle_auto_rebalance":
- case "mantle_publish_agent_state":
- case "mantle_agent_heartbeat":
-        return await executeAutonomousTool(env, name, args);
+      case "mantle_execute_yield_strategy":
+        return await executeYieldStrategy(env, args, ctx);
+      case "mantle_monitor_positions":
+        return await monitorPositions(env, args, ctx);
+      case "mantle_auto_rebalance":
+        return await autoRebalance(env, args, ctx);
+      case "mantle_publish_agent_state":
+        return await publishAgentState(env, args, ctx);
+      case "mantle_agent_heartbeat":
+        return await agentHeartbeat(env, args, ctx);
+      case "mantle_wallet_create":
+        return await createWallet(env, args, ctx);
+      case "mantle_wallet_import":
+        return await importWallet(env, args, ctx);
+      case "mantle_wallet_status":
+        return await walletStatus(env, args, ctx);
       default:
         return { content: `Unknown tool: ${name}`, error: true };
     }
@@ -647,7 +656,7 @@ async function toolRemoteExec(env: Env, command: string, workspaceId?: string): 
     });
 
     if (!response.ok) {
-      return { content: `Executor error: HTTP ${response.status}`, error: true };
+      return { content: `RemoteExec error: HTTP ${response.status}`, error: true };
     }
 
     const data: any = await response.json();

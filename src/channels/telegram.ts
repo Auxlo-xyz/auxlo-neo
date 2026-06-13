@@ -580,46 +580,44 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         const args = cmd.args.toLowerCase();
         if (args === "create") {
           await sendChatAction(env, chatId, "typing");
-          const genCmd = `node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
-          const { getSession, saveSession, createSession } = await import("../memory");
-          
-          // Use remoteExec to generate wallet
           const { executeTool } = await import("../tools");
-          const res = await executeTool(env, "remote_exec", { command: genCmd }, { channel: "telegram", sessionId });
+          const res = await executeTool(env, "mantle_wallet_create", {}, { channel: "telegram", sessionId });
           
           if (res.error || !res.content) {
-            console.error(`[WalletGenError] User: ${userId}, Result:`, res);
             await sendText(env, chatId, `Failed to generate wallet. Error: ${res.content || "No output from executor"}`);
             return;
           }
           
-          const lines = res.content.trim().split('\n');
-          if (lines.length < 2) {
-            await sendText(env, chatId, "Wallet generation returned incomplete data. Please try again.");
-            return;
-          }
+          const content = res.content;
+          const lines = content.split('\n').filter(l => l.trim());
+          const address = lines.find(l => l.toLowerCase().includes('address:'))?.split(/: {1,}/)[1]?.trim() || "unknown";
+          const privKey = lines.find(l => l.toLowerCase().includes('private key:'))?.split(/: {1,}/)[1]?.trim() || "unknown";
           
-          const address = lines[0].trim();
-          const privKey = lines[1].trim();
           const encryptedKey = await encryptKey(privKey, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
-          
           await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
           
           const details = `*New Mantle Wallet Generated*\n\n` +
                            `Address: \`${address}\`\n` +
                            `Private Key: \`${privKey}\`\n\n` +
-                           `⚠️ *CRITICAL*: Save this key immediately in a safe place. I will delete this message once you confirm you've saved it. I cannot recover this key for you.`;
+                           `⚠️ *CRITICAL*: Save this key immediately. I will delete this message once you confirm.`;
           
+          await sendText(env, chatId, details, {
+            inline_keyboard: [[{ text: "✅ I've saved it", callback_data: "wallet_confirm_save" }]]
+          });
+          
+          // To save the message ID for deletion, we need the result of sendText.
+          // Since sendText doesn't return the message ID, we'll use tgApi for the final send
+          // but we'll let sendText handle the escaping first.
+          const formatted = markdownToTelegram(details);
           const msg = await tgApi(env, "sendMessage", { 
             chat_id: chatId, 
-            text: details, 
+            text: formatted, 
             parse_mode: "MarkdownV2",
             reply_markup: {
               inline_keyboard: [[{ text: "✅ I've saved it", callback_data: "wallet_confirm_save" }]]
             }
           });
           
-          // Save message ID for deletion
           await env.CONFIG.put(`wallet_msg:${userId}`, (msg as any).result.message_id.toString());
           return;
         } else if (args === "status") {

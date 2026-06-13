@@ -58,6 +58,12 @@ export interface ToolDefinition {
   };
 }
 
+export interface ToolContext {
+  channel?: string;
+  sessionId?: string;
+  userId?: string;
+}
+
 export interface ToolResult {
   content: string;
   error?: boolean;

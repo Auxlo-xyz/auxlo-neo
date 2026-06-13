@@ -4,7 +4,7 @@ import { handleDiscordWebhook, registerDiscordCommands } from "./channels/discor
 import { handleChatCompletions } from "./channels/api";
 import { listProviders } from "./providers";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
