@@ -11,9 +11,22 @@ export async function compactMessages(
   const systemMessage = messages.find(m => m.role === "system");
   const chatMessages = messages.filter(m => m.role !== "system");
 
-  // we only summarize the 'old' part
-  const summaryTarget = chatMessages.slice(0, chatMessages.length - 20);
-  const activeWindow = chatMessages.slice(-20);
+  // Determine a tool-safe split point to avoid orphaning tool responses
+  let splitIndex = chatMessages.length - 20;
+  if (splitIndex < 0) splitIndex = 0;
+  
+  // Gemini requires that tool responses are immediately preceded by the assistant's tool call.
+  // If we start the active window with a tool response, the model will error 400.
+  while (splitIndex < chatMessages.length && chatMessages[splitIndex].role === "tool") {
+    splitIndex--;
+    if (splitIndex < 0) {
+      splitIndex = 0;
+      break;
+    }
+  }
+  
+  const summaryTarget = chatMessages.slice(0, splitIndex);
+  const activeWindow = chatMessages.slice(splitIndex);
 
   const summaryPrompt = `You are a memory compression engine. 
 Analyze the following conversation history and create a concise, high-density summary of the key facts, user preferences, and current state of the task. 
