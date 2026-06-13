@@ -292,6 +292,12 @@ const AGNI_ROUTER_MAINNET = "0x319B69888b0d11cEC22caA5034e25FfFBDc88421";
 const FLUXION_ROUTER_MAINNET = "0x5628a59dF0ECAC3f3171f877A94bEb26BA6DFAa0";
 const MERCHANT_MOE_QUOTER = "0x64449473A5A2770d0eBfA1D6C169609D22c7e90e"; // verified quoter for Moe
 
+const SIGNATURES = {
+  MERCHANT_MOE: "function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)",
+  AGNI: "function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)",
+  APPROVE: "function approve(address spender, uint256 amount) external returns (bool)"
+};
+
 const MNT_ADDRESS = "0x0000000000000000000000000000000000000000";
 const USDC_ADDRESS_MAINNET = "0x09Bc4E0D864854c6aF6C71AC4eD4c1b3C2D25E4c";
 const USDC_ADDRESS_TESTNET = "0xB8255fE3a7f65AfC1d877831Fa9F82E0B5f514D1";
@@ -310,61 +316,86 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
   }
 
   // Map strategy to router
-  const router = network === "mainnet" 
+  const router: string = network === "mainnet" 
     ? (strategy === "aggressive" ? AGNI_ROUTER_MAINNET : MERCHANT_MOE_ROUTER_MAINNET)
     : MERCHANT_MOE_ROUTER_TESTNET;
 
   const amountIn = tokenIn === "USDC" ? (maxAmountUsd * 1e6).toString() : (maxAmountUsd * 1e18).toString();
   
-  // Use a real node script via remoteExec to perform the swap using ethers.js
+  // 1. Handle Fluxion specifically (Quote API based)
+  if (router === FLUXION_ROUTER_MAINNET) {
+    try {
+      const quoteUrl = `https://api.fluxion.network/quote/exact-in?tokenIn=${tokenIn}&tokenOut=${tokenOut}&amount=${amountIn}`;
+      const quoteData = await httpFetch(quoteUrl);
+      const calldata = quoteData.data?.calldata;
+      if (!calldata) throw new Error("No calldata returned from Fluxion Quote API");
+
+      const swapScript = `
+        const { ethers } = require("ethers");
+        async function main() {
+          const provider = new ethers.JsonRpcProvider("${network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'}");
+          const wallet = new ethers.Wallet(process.env.MANTLE_PRIVATE_KEY, provider);
+          const feeData = await provider.getFeeData();
+          
+          console.log("Executing Fluxion swap via calldata...");
+          const tx = await wallet.sendTransaction({
+            to: "${router}",
+            data: "${calldata}",
+            maxFeePerGas: feeData.maxFeePerGas,
+            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas
+          });
+          console.log("TX_HASH:" + tx.hash);
+        }
+        main().catch(console.error);
+      `;
+      const result = await remoteExec(swapScript, env);
+      if (result.error) return result;
+      const match = (result.content || "").match(/TX_HASH:(0x[a-fA-F0-9]+)/);
+      if (match) return { content: `Fluxion swap executed!\nTx Hash: ${match[1]}`, error: false };
+      return { content: `Fluxion swap executed but no tx hash found.`, error: true };
+    } catch (e: any) {
+      return { content: `Fluxion quote failed: ${e.message}`, error: true };
+    }
+  }
+
+  // 2. Standard Router flow (Merchant Moe / Agni)
   const swapScript = `
     const { ethers } = require("ethers");
     async function main() {
       const provider = new ethers.JsonRpcProvider("${network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'}");
       const wallet = new ethers.Wallet(process.env.MANTLE_PRIVATE_KEY, provider);
-      
-      // 1. GAS GUARD: Dynamic EIP-1559 Fee Estimation
       const feeData = await provider.getFeeData();
-      const maxFee = feeData.maxFeePerGas;
-      const maxPriorityFee = feeData.maxPriorityFeePerGas;
       
-      const router = new ethers.Contract("${router}", [
-        "function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)",
-        "function approve(address spender, uint256 amount) external returns (bool)"
-      ], wallet);
-
-      const quoter = new ethers.Contract("${MERCHANT_MOE_QUOTER}", [
-        "function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint32 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut)"
-      ], provider);
+      const sig = ${JSON.stringify(router === AGNI_ROUTER_MAINNET ? SIGNATURES.AGNI : SIGNATURES.MERCHANT_MOE)};
+      const routerContract = new ethers.Contract("${router}", [sig, "${SIGNATURES.APPROVE}"], wallet);
       
       const path = ["${tokenIn === 'USDC' ? (network === 'mainnet' ? USDC_ADDRESS_MAINNET : USDC_ADDRESS_TESTNET) : MNT_ADDRESS}", "${tokenOut === 'MNT' ? MNT_ADDRESS : '0x...'}"];
       const amountInWei = ethers.parseEther(amountIn);
       
-      // 2. SLIPPAGE GUARD: Calculate amountOutMin
+      // Slippage Guard
       let amountOutMin = 0;
-      try {
-        const expectedOut = await quoter.quoteExactInputSingle({
-          tokenIn: path[0],
-          tokenOut: path[1],
-          amountIn: amountInWei,
-          fee: 3000, // Default 0.3% fee pool
-          sqrtPriceLimitX96: 0
-        });
-        // Apply 0.5% slippage tolerance
-        amountOutMin = (expectedOut * 995n) / 1000n;
-        console.log(\`Expected Out: \${ethers.formatUnits(expectedOut, 18)}, Min Out: \${ethers.formatUnits(amountOutMin, 18)}\`);
-      } catch (e) {
-        console.log("Quoter failed, using 0 for amountOutMin (WARNING: MEV RISK)");
+      if ("${router}" === "${MERCHANT_MOE_ROUTER_MAINNET}") {
+        const quoter = new ethers.Contract("${MERCHANT_MOE_QUOTER}", ["function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint32 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut)"], provider);
+        try {
+          const expectedOut = await quoter.quoteExactInputSingle({
+            tokenIn: path[0],
+            tokenOut: path[1],
+            amountIn: amountInWei,
+            fee: 3000,
+            sqrtPriceLimitX96: 0
+          });
+          amountOutMin = (expectedOut * 995n) / 1000n;
+        } catch (e) {}
       }
 
-      console.log(\`Executing swap via ${router} with Gas: \${maxFee} / \${maxPriorityFee}...\`);
-      const tx = await router.swapExactTokensForTokens(
+      console.log("Executing swap...");
+      const tx = await routerContract.swapExactTokensForTokens(
         amountInWei, 
         amountOutMin, 
         path, 
         wallet.address, 
         Math.floor(Date.now() / 1000) + 60 * 20,
-        { maxFeePerGas: maxFee, maxPriorityFeePerGas: maxPriorityFee }
+        { maxFeePerGas: feeData.maxFeePerGas, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas }
       );
       console.log("TX_HASH:" + tx.hash);
     }
