@@ -501,10 +501,26 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         );
         return;
 
-      case "reset":
-        await env.SESSIONS.delete(`session:${sessionId}`);
-        await sendText(env, chatId, "Session cleared.");
+      case "reset": {
+        const { getSession, saveSession, createSession } = await import("../memory");
+        const session = await getSession(env.SESSIONS, sessionId);
+        
+        if (session) {
+          const provider = session.provider;
+          const model = session.model;
+          
+          // Create a new clean session but preserve preferences
+          const newSession = createSession(sessionId);
+          newSession.provider = provider;
+          newSession.model = model;
+          await saveSession(env.SESSIONS, sessionId, newSession);
+        } else {
+          await env.SESSIONS.delete(`session:${sessionId}`);
+        }
+        
+        await sendText(env, chatId, "Session cleared. Your provider and model preferences have been preserved.");
         return;
+      }
 
       case "model":
         if (cmd.args) {
