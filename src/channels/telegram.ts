@@ -497,7 +497,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           "- persona: tweak how i act with /persona.\n" +
           "- mantle wallet: /wallet lets me handle yield strategies on mantle for you.\n" +
           "- data sharing: /grant lets you share context with others.\n\n" +
-          "check /help for the full list. what's on your mind?"
+          "check /help for the full list."
         );
         return;
 
