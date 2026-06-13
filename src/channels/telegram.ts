@@ -18,6 +18,9 @@ interface TelegramMessage {
   from: TelegramUser;
   chat: { id: number; type: string };
   text?: string;
+  caption?: string;
+  photo?: any[];
+  document?: any;
 }
 
 interface TelegramCallbackQuery {
@@ -119,6 +122,12 @@ async function sendText(env: Env, chatId: number, text: string, replyMarkup?: Re
       await tgApi(env, "sendMessage", body);
     }
   }
+}
+
+async function getFileUrl(env: Env, fileId: string): Promise<string | null> {
+  const res = await tgApi(env, "getFile", { file_id: fileId });
+  if (!res?.ok || !res.result?.file_path) return null;
+  return `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${res.result.file_path}`;
 }
 
 async function encryptKey(plainText: string, secret: string): Promise<string> {
@@ -409,13 +418,27 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
 
   const chatId = msg.chat.id;
   const userId = `telegram:${msg.from.id.toString()}`; // Channel-prefixed for isolation
-  let text = msg.text;
+  let text = msg.text || msg.caption || "";
   const sessionId = `telegram:${chatId}`;
 
   // Strip bot mention from the start of the message (e.g., "@AuxloNeo hello" -> "hello")
   if (text.startsWith("@")) {
     text = text.replace(/^@\w+\s*/, "").trim();
   }
+
+  // Handle media
+  const media: any[] = [];
+  if (msg.photo) {
+    // Use the highest resolution photo (last in array)
+    const fileId = msg.photo[msg.photo.length - 1].file_id;
+    const url = await getFileUrl(env, fileId);
+    if (url) media.push({ type: "image", url, caption: msg.caption });
+  } else if (msg.document) {
+    const url = await getFileUrl(env, msg.document.file_id);
+    if (url) media.push({ type: "document", url, caption: msg.caption });
+  }
+
+  if (!text && media.length === 0) return;
 
   // ---- Check if user is in endpoint wizard ----
   const wizard = await getWizardState(env, userId);
@@ -705,6 +728,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     message: text,
     session_id: sessionId,
     userId: userId, // Pass userId for RLS check
+    media: media,
   };
 
   ctx.waitUntil(

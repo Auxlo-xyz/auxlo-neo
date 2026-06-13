@@ -41,13 +41,36 @@ export const BUILTIN: Record<string, ProviderConfig> = {
       "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
     }),
-    transformRequest: (req, model) => {
+    transformRequest: async (req, model) => {
       const messages = req.messages.filter((m) => m.role !== "system");
       const systemMsg = req.messages.find((m) => m.role === "system");
+      
+      const transformedMessages = await Promise.all(messages.map(async (m) => {
+        const content: any[] = [];
+        if (m.content) content.push({ type: "text", text: m.content });
+        if (m.media) {
+          for (const media of m.media) {
+            if (media.type === "image") {
+              const resp = await fetch(media.url);
+              const buffer = await resp.arrayBuffer();
+              content.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: resp.headers.get("content-type") || "image/jpeg",
+                  data: btoa(String.fromCharCode(...new Uint8Array(buffer))),
+                },
+              });
+            }
+          }
+        }
+        return { role: m.role, content };
+      }));
+
       const body: any = {
         model,
         max_tokens: req.max_tokens || 4096,
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: transformedMessages,
       };
       if (systemMsg) body.system = systemMsg.content;
       if (req.tools && req.tools.length > 0) {
@@ -81,10 +104,9 @@ export const BUILTIN: Record<string, ProviderConfig> = {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     defaultModel: "gemini-2.0-flash",
     buildHeaders: () => ({ "Content-Type": "application/json" }),
-    transformRequest: (req, model) => {
-      const contents = req.messages.filter((m) => m.role !== "system").map((m) => {
+    transformRequest: async (req, model) => {
+      const contents = await Promise.all(req.messages.filter((m) => m.role !== "system").map(async (m) => {
         if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
-          // Build functionCall parts with thoughtSignatures for assistant/model messages
           const parts = m.tool_calls.map((tc) => {
             const part: any = {
               functionCall: {
@@ -99,11 +121,28 @@ export const BUILTIN: Record<string, ProviderConfig> = {
           });
           return { role: "model", parts };
         }
+        
+        const parts: any[] = [];
+        if (m.content) parts.push({ text: m.content });
+        if (m.media) {
+          for (const media of m.media) {
+            if (media.type === "image") {
+              const resp = await fetch(media.url);
+              const buffer = await resp.arrayBuffer();
+              parts.push({
+                inline_data: {
+                  mime_type: resp.headers.get("content-type") || "image/jpeg",
+                  data: btoa(String.fromCharCode(...new Uint8Array(buffer))),
+                },
+              });
+            }
+          }
+        }
         return {
           role: m.role === "assistant" ? "model" : "user",
-          parts: [{ text: m.content || "" }],
+          parts,
         };
-      });
+      }));
       const systemMsg = req.messages.find((m) => m.role === "system");
       const body: any = { contents, generationConfig: { maxOutputTokens: req.max_tokens || 4096, temperature: req.temperature } };
       if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
@@ -272,9 +311,38 @@ export async function callProvider(env: Env, providerName: string, req: Provider
   let body: unknown;
 
   if (config.transformRequest) {
-    body = config.transformRequest(req, model);
+    body = await config.transformRequest(req, model);
   } else {
-    body = { model, messages: req.messages, max_tokens: req.max_tokens || 4096, temperature: req.temperature, tools: req.tools };
+    // OpenAI-compatible transformation with multimodal support
+    const messages = req.messages.map((m) => {
+      if (m.role === "system") return m;
+      
+      const content: any[] = [];
+      if (m.content) content.push({ type: "text", text: m.content });
+      if (m.media) {
+        for (const media of m.media) {
+          if (media.type === "image") {
+            content.push({
+              type: "image_url",
+              image_url: { url: media.url },
+            });
+          }
+        }
+      }
+      
+      return {
+        ...m,
+        content: content.length > 0 ? content : m.content,
+      };
+    });
+
+    body = { 
+      model, 
+      messages, 
+      max_tokens: req.max_tokens || 4096, 
+      temperature: req.temperature, 
+      tools: req.tools 
+    };
   }
 
   if (config.getEndpointUrl) {

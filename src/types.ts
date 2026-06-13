@@ -37,6 +37,7 @@ export interface Message {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  media?: UserMedia[];
 }
 
 export interface ToolCall {
@@ -64,6 +65,13 @@ export interface ToolContext {
 export interface ToolResult {
   content: string;
   error?: boolean;
+}
+
+export interface UserMedia {
+  type: "image" | "document";
+  url: string;
+  caption?: string;
+  mime_type?: string;
 }
 
 export interface Skill {
@@ -96,6 +104,7 @@ export interface AgentRequest {
   channel?: string;
   userId?: string;
   username?: string;
+  media?: UserMedia[];
 }
 
 export interface AgentResponse {

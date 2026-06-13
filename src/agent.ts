@@ -119,7 +119,11 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   const toolCtx = { channel, sessionId, userId };
 
   // Add user message
-  const userMessage: Message = { role: "user", content: req.message };
+  const userMessage: Message = { 
+    role: "user", 
+    content: req.message,
+    media: req.media 
+  };
   addMessage(session, userMessage);
 
   // Load memory context
@@ -157,6 +161,14 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     { role: "system", content: finalSystemPrompt },
     ...session.messages,
   ];
+
+  // Append the current user message with media
+  const currentMessage: Message = { 
+    role: "user", 
+    content: req.message || null, 
+    media: req.media 
+  };
+  messages.push(currentMessage);
 
   const toolDefs = await getToolDefinitions(env, toolCtx);
 
