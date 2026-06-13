@@ -94,6 +94,11 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     await saveSession(env.SESSIONS, sessionId, session);
   }
 
+  // Resolve identity and channel first (needed for provider resolution and tools)
+  const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
+  const userId = req.userId || (sessionId.includes(":") ? sessionId : undefined);
+  const toolCtx = { channel, sessionId, userId };
+
   // Resolve provider/model: request > session > env default > first custom provider > "openai"
   let providerId = req.provider || session.provider || env.DEFAULT_PROVIDER || "";
 
@@ -117,13 +122,6 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
 
   const providerDisplayName = providerConfig?.name || providerId;
   const model = req.model || session.model || env.DEFAULT_MODEL || providerConfig?.defaultModel || "gpt-4o-mini";
-
-  // Extract channel context from session ID
-  const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
-  
-  // Resolve userId: request userId > session prefix > fallback
-  const userId = req.userId || (sessionId.includes(":") ? sessionId : undefined);
-  const toolCtx = { channel, sessionId, userId };
 
   // Add user message
   const userMessage: Message = { 
