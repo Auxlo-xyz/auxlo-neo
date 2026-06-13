@@ -29,10 +29,11 @@ AuxloNeo is now equipped with a fully autonomous on-chain suite for the **Mantle
 
 **What it can do for you on Mantle:**
 - **Live Opportunity Scanning**: Automatically scans Mantle DeFi pools (via DefiLlama) to find the best yields.
-- **Autonomous Strategy Execution**: Deploys yield strategies and executes swaps using real on-chain tools.
-- **Portfolio Monitoring**: Tracks your positions in real-time and claims rewards automatically.
-- **Auto-Rebalancing**: Shifts assets between protocols to optimize returns based on live data.
-- **Transparency**: Publishes its current agent state and heartbeat to Mantle Data Streams.
+- **Production-Grade Execution**: Swaps and deposits tokens using real on-chain tools with built-in **Slippage Guards** and **Dynamic Gas Protection**.
+- **MEV Protection**: Supports Private RPC routing and Priority Fee boosting to prevent sandwich attacks and ensure transaction inclusion.
+- **Portfolio Monitoring**: Tracks your positions in real-time, audits token balances, and claims rewards automatically.
+- **Auto-Rebalancing**: Dynamically shifts assets between protocols to optimize returns based on live yield data.
+- **Transparency**: Publishes its current agent state and heartbeat to Mantle Data Streams for public verification.
 
 *Designed for the Mantle Turing Test Hackathon.*
 
