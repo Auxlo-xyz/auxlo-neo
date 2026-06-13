@@ -46,12 +46,28 @@ export function trimSession(session: SessionState): void {
 }
 
 // Save a fact/memory to KV for cross-session recall
-export async function saveMemory(kv: KVNamespace, sessionId: string, key: string, value: string): Promise<void> {
+export async function saveMemory(kv: KVNamespace, sessionId: string, key: string, value: string, requesterId?: string, env?: Env): Promise<void> {
+  if (requesterId && env) {
+    const session = await getSession(kv, sessionId);
+    const ownerId = session?.owner_id || sessionId;
+    if (requesterId !== ownerId) {
+      console.error(`[RLS] Memory write denied: ${requesterId} -> ${sessionId}`);
+      return;
+    }
+  }
   await kv.put(`memory:${sessionId}:${key}`, value, { expirationTtl: MEMORY_TTL });
 }
 
 // Get memory context for a session (recent memories)
-export async function getMemory(kv: KVNamespace, sessionId: string): Promise<string | null> {
+export async function getMemory(kv: KVNamespace, sessionId: string, requesterId?: string, env?: Env): Promise<string | null> {
+  if (requesterId && env) {
+    const session = await getSession(kv, sessionId);
+    const ownerId = session?.owner_id || sessionId;
+    if (requesterId !== ownerId) {
+      console.error(`[RLS] Memory read denied: ${requesterId} -> ${sessionId}`);
+      return null;
+    }
+  }
   const list = await kv.list({ prefix: `memory:${sessionId}:`, limit: 20 });
   if (list.keys.length === 0) return null;
 

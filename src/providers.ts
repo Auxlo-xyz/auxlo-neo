@@ -246,15 +246,17 @@ function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
   };
 }
 
-export async function listProviders(env: Env, userId: string): Promise<{ id: string; name: string; model: string; type: string }[]> {
+export async function listProviders(env: Env, userId?: string): Promise<{ id: string; name: string; model: string; type: string }[]> {
   const result: { id: string; name: string; model: string; type: string }[] = [];
   for (const [id, cfg] of Object.entries(BUILTIN)) {
     const key = env[cfg.keyEnv];
     result.push({ id, name: cfg.name, model: cfg.defaultModel, type: key ? "builtin" : "builtin (no key)" });
   }
-  const customs = await loadCustomProviders(env, userId);
-  for (const [id, cfg] of Object.entries(customs)) {
-    result.push({ id, name: cfg.name, model: cfg.defaultModel, type: "custom" });
+  if (userId) {
+    const customs = await loadCustomProviders(env, userId);
+    for (const [id, cfg] of Object.entries(customs)) {
+      result.push({ id, name: cfg.name, model: cfg.defaultModel, type: "custom" });
+    }
   }
   return result;
 }

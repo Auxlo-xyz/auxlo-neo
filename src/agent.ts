@@ -80,9 +80,18 @@ YOUR VOICE:
 export async function agentChat(env: Env, req: AgentRequest): Promise<AgentResponse> {
   const sessionId = req.session_id || "default";
 
-  let session = await getSession(env.SESSIONS, sessionId);
+  // Resolve identity and channel first (needed for provider resolution and tools)
+  const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
+  const userId = req.userId || (sessionId.includes(":") ? sessionId : undefined);
+  const toolCtx = { channel, sessionId, userId };
+
+  // Use RLS-protected session getter to enforce user isolation
+  let session = userId 
+    ? await getSessionWithRLS(env, sessionId, userId) 
+    : await getSession(env.SESSIONS, sessionId);
+
   if (!session) {
-    session = createSession(sessionId);
+    session = createSession(sessionId, userId);
   }
 
   // Handle session compaction if history is too long
@@ -93,11 +102,6 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     session.messages = await compactMessages(env, session.messages, providerName, model || "gpt-4o-mini");
     await saveSession(env.SESSIONS, sessionId, session);
   }
-
-  // Resolve identity and channel first (needed for provider resolution and tools)
-  const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
-  const userId = req.userId || (sessionId.includes(":") ? sessionId : undefined);
-  const toolCtx = { channel, sessionId, userId };
 
   // Resolve provider/model: request > session > env default > first custom provider > "openai"
   let providerId = req.provider || session.provider || env.DEFAULT_PROVIDER || "";
@@ -132,7 +136,9 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   addMessage(session, userMessage);
 
   // Load memory context
-  const memoryContext = await getMemory(env.MEMORY, sessionId);
+  const memoryContext = userId 
+    ? await getMemory(env.MEMORY, sessionId, userId, env) 
+    : await getMemory(env.MEMORY, sessionId);
 
   // Load persona: per-session (from /persona command) > env default
   let systemPrompt = env.DEFAULT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
@@ -261,7 +267,13 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   }
 
   session.updatedAt = Date.now();
-  await saveSession(env.SESSIONS, sessionId, session);
+  
+  // Use RLS-protected session setter
+  if (userId) {
+    await saveSessionWithRLS(env.SESSIONS, sessionId, session, userId);
+  } else {
+    await saveSession(env.SESSIONS, sessionId, session);
+  }
 
   // Track usage
   if (usage) {

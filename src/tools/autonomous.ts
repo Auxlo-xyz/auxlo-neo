@@ -1,4 +1,4 @@
-import type { Env, ToolDefinition, ToolResult } from "../types";
+import type { Env, ToolDefinition, ToolResult, ToolContext } from "../types";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -465,7 +465,7 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>, ctx
 /* ================================================================== */
 
 async function monitorPositions(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
-  const wallet = (args.wallet as string) || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
+  const wallet = (args.wallet as string) || (ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "");
   const network = (args.network as "mainnet" | "testnet") || "mainnet";
 
   if (!wallet || !wallet.startsWith("0x")) {
@@ -529,7 +529,7 @@ EOF`,
 /* ================================================================== */
 
 async function autoRebalance(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
-  const wallet = (args.wallet as string) || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
+  const wallet = (args.wallet as string) || (ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "");
   const targetAlloc = (args.target_allocation as Record<string, number>) || {};
   const network = (args.network as "mainnet" | "testnet") || "mainnet";
 
@@ -645,7 +645,7 @@ async function publishAgentState(env: Env, args: Record<string, unknown>): Promi
 /* ================================================================== */
 
 async function agentHeartbeat(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
-  const wallet = (args.wallet as string) || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
+  const wallet = (args.wallet as string) || (ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "");
   const network = (args.network as "mainnet" | "testnet") || "mainnet";
 
   if (!wallet || !wallet.startsWith("0x")) {
@@ -705,7 +705,7 @@ async function createWallet(env: Env, _args: Record<string, unknown>, ctx?: Tool
       return { content: `Wallet API error: HTTP ${response.status}`, error: true };
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
     if (!data.address || !data.privateKey) {
       return { content: `Wallet API returned incomplete data: ${JSON.stringify(data)}`, error: true };
     }
@@ -738,7 +738,7 @@ async function importWallet(env: Env, args: Record<string, unknown>, ctx?: ToolC
 }
 
 async function walletStatus(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
-  const wallet = args.wallet as string || ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "";
+  const wallet = (args.wallet as string) || (ctx?.userId ? (await env.CONFIG.get(`wallet:${ctx.userId}`, "json") as any)?.address : "");
   if (!wallet || !wallet.startsWith("0x")) return { content: "No wallet found for this user. Use /wallet create to generate one.", error: true };
   return await agentHeartbeat(env, { wallet, network: "mainnet" }, ctx);
 }

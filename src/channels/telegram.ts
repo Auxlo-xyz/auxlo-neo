@@ -534,7 +534,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           await saveSession(env.SESSIONS, sessionId, session);
           await sendText(env, chatId, `Provider set to: ${cmd.args}`);
         } else {
-          const providers = await listProviders(env);
+          const providers = await listProviders(env, userId);
           await sendText(env, chatId, "Choose a provider:", providerKeyboard(providers));
         }
         return;
@@ -545,14 +545,14 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         return;
 
       case "endpoints": {
-        const { listProviders } = await import("../providers");
-        const providers = await listProviders(env, userId);
-        const customs = providers.filter(p => p.type === "custom");
+        const { loadCustomProviders } = await import("../providers");
+        const customsMap = await loadCustomProviders(env, userId);
+        const customs = Object.entries(customsMap).map(([id, cfg]) => ({ id, ...cfg }));
         if (customs.length === 0) {
           await sendText(env, chatId, "No custom endpoints saved. Use /endpoint to add one.");
           return;
         }
-        const lines = customs.map((c) => `- \`${c.id}\` | ${c.type} | ${c.base_url} | ${c.default_model}`);
+        const lines = customs.map((c) => `- \`${c.id}\` | ${c.name} | ${c.baseUrl} | ${c.defaultModel}`);
         const rows = customs.map((c) => [{ text: `Delete ${c.id}`, callback_data: `del_endpoint:${c.id}` }]);
         await sendText(env, chatId, "Saved endpoints:\n\n" + lines.join("\n"), { inline_keyboard: rows });
         return;
