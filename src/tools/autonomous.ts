@@ -122,6 +122,7 @@ export function getAutonomousToolDefinitions(): ToolDefinition[] {
             max_amount_usd: { type: "number", description: "Max USD to deploy" },
             token_in: { type: "string", description: "Input token symbol (e.g. USDC, MNT, ETH)" },
             token_out: { type: "string", description: "Target pool token" },
+            private_mode: { type: "boolean", description: "Use private RPC to avoid MEV sandwiching" },
           },
           required: ["strategy"],
         },
@@ -308,6 +309,7 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
   const tokenIn = (args.token_in as string) || "USDC";
   const tokenOut = (args.token_out as string) || "MNT";
   const network = (args.network as "mainnet" | "testnet") || "testnet";
+  const privateMode = (args.private_mode as boolean) || false;
 
   const e = getEnv(env);
   const privateKey = e.MANTLE_PRIVATE_KEY;
@@ -316,55 +318,34 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
   }
 
   // Map strategy to router
-  const router: string = network === "mainnet" 
+  const router = network === "mainnet" 
     ? (strategy === "aggressive" ? AGNI_ROUTER_MAINNET : MERCHANT_MOE_ROUTER_MAINNET)
     : MERCHANT_MOE_ROUTER_TESTNET;
 
+  const rpcUrl = privateMode 
+    ? (e.MANTLE_PRIVATE_RPC || (network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'))
+    : (network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz');
+
   const amountIn = tokenIn === "USDC" ? (maxAmountUsd * 1e6).toString() : (maxAmountUsd * 1e18).toString();
   
-  // 1. Handle Fluxion specifically (Quote API based)
-  if (router === FLUXION_ROUTER_MAINNET) {
-    try {
-      const quoteUrl = `https://api.fluxion.network/quote/exact-in?tokenIn=${tokenIn}&tokenOut=${tokenOut}&amount=${amountIn}`;
-      const quoteData = await httpFetch(quoteUrl);
-      const calldata = quoteData.data?.calldata;
-      if (!calldata) throw new Error("No calldata returned from Fluxion Quote API");
-
-      const swapScript = `
-        const { ethers } = require("ethers");
-        async function main() {
-          const provider = new ethers.JsonRpcProvider("${network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'}");
-          const wallet = new ethers.Wallet(process.env.MANTLE_PRIVATE_KEY, provider);
-          const feeData = await provider.getFeeData();
-          
-          console.log("Executing Fluxion swap via calldata...");
-          const tx = await wallet.sendTransaction({
-            to: "${router}",
-            data: "${calldata}",
-            maxFeePerGas: feeData.maxFeePerGas,
-            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas
-          });
-          console.log("TX_HASH:" + tx.hash);
-        }
-        main().catch(console.error);
-      `;
-      const result = await remoteExec(swapScript, env);
-      if (result.error) return result;
-      const match = (result.content || "").match(/TX_HASH:(0x[a-fA-F0-9]+)/);
-      if (match) return { content: `Fluxion swap executed!\nTx Hash: ${match[1]}`, error: false };
-      return { content: `Fluxion swap executed but no tx hash found.`, error: true };
-    } catch (e: any) {
-      return { content: `Fluxion quote failed: ${e.message}`, error: true };
-    }
-  }
-
-  // 2. Standard Router flow (Merchant Moe / Agni)
+  // Use a real node script via remoteExec to perform the swap using ethers.js
   const swapScript = `
     const { ethers } = require("ethers");
     async function main() {
-      const provider = new ethers.JsonRpcProvider("${network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'}");
+      const provider = new ethers.JsonRpcProvider("${rpcUrl}");
       const wallet = new ethers.Wallet(process.env.MANTLE_PRIVATE_KEY, provider);
+      
+      // 1. GAS GUARD: Dynamic EIP-1559 Fee Estimation
       const feeData = await provider.getFeeData();
+      let maxFee = feeData.maxFeePerGas;
+      let maxPriorityFee = feeData.maxPriorityFeePerGas;
+      
+      // Priority Fee Tuning for Private RPC
+      if (${privateMode}) {
+        console.log("Private Mode Active: Boosting priority fee to ensure inclusion");
+        maxPriorityFee = maxPriorityFee ? maxPriorityFee * 2n : ethers.parseGwei("2");
+        maxFee = maxFee ? maxFee + maxPriorityFee : ethers.parseGwei("20");
+      }
       
       const sig = ${JSON.stringify(router === AGNI_ROUTER_MAINNET ? SIGNATURES.AGNI : SIGNATURES.MERCHANT_MOE)};
       const routerContract = new ethers.Contract("${router}", [sig, "${SIGNATURES.APPROVE}"], wallet);
@@ -395,7 +376,7 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
         path, 
         wallet.address, 
         Math.floor(Date.now() / 1000) + 60 * 20,
-        { maxFeePerGas: feeData.maxFeePerGas, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas }
+        { maxFeePerGas: maxFee, maxPriorityFeePerGas: maxPriorityFee }
       );
       console.log("TX_HASH:" + tx.hash);
     }
