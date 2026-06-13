@@ -248,21 +248,14 @@ export async function executeTool(
       case "byreal_wallet_balance":
         return await executeByrealTool(env, name, args);
       case "mantle_execute_yield_strategy":
-        return await executeYieldStrategy(env, args, ctx);
       case "mantle_monitor_positions":
-        return await monitorPositions(env, args, ctx);
       case "mantle_auto_rebalance":
-        return await autoRebalance(env, args, ctx);
       case "mantle_publish_agent_state":
-        return await publishAgentState(env, args, ctx);
       case "mantle_agent_heartbeat":
-        return await agentHeartbeat(env, args, ctx);
       case "mantle_wallet_create":
-        return await createWallet(env, args, ctx);
       case "mantle_wallet_import":
-        return await importWallet(env, args, ctx);
       case "mantle_wallet_status":
-        return await walletStatus(env, args, ctx);
+        return await executeAutonomousTool(env, name, args, ctx);
       default:
         return { content: `Unknown tool: ${name}`, error: true };
     }
