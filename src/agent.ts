@@ -10,7 +10,7 @@ import { listSkills } from "./skills";
 const MAX_TOOL_ROUNDS = 8;
 const PROGRESS_NUDGE_INTERVAL = 5; // Nudge every 5 tool calls
 
-const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a living agent on Cloudflare Workers. You are not a general assistant or chatbot.
+const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a living agent on Cloudflare Workers. You are not a general agent or chatbot.
 Current Year: 2026.
 
 ## MULTIMODAL CAPABILITIES

@@ -490,7 +490,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     switch (cmd.command) {
       case "start":
         await sendText(env, chatId,
-          "welcome to auxloneo. i'm your edge-native assistant, living on cloudflare workers. fast, private, and autonomous.\n\n" +
+          "welcome to auxloneo. i'm your edge-native agent, living on cloudflare workers. fast, private, and autonomous.\n\n" +
           "here is what i can do:\n" +
           "- smart chat: just start typing. i can see images and docs.\n" +
           "- custom ai: use /endpoint for your own providers or /model to switch brains.\n" +
