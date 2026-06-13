@@ -290,6 +290,7 @@ const MERCHANT_MOE_ROUTER_MAINNET = "0xeaEE7EE68874218c3558b40063c42B82D3E7232a"
 const MERCHANT_MOE_ROUTER_TESTNET = "0xFB76e3e8837112373F1b9234EaB90ec8B5266c4f";
 const AGNI_ROUTER_MAINNET = "0x319B69888b0d11cEC22caA5034e25FfFBDc88421";
 const FLUXION_ROUTER_MAINNET = "0x5628a59dF0ECAC3f3171f877A94bEb26BA6DFAa0";
+const MERCHANT_MOE_QUOTER = "0x64449473A5A2770d0eBfA1D6C169609D22c7e90e"; // verified quoter for Moe
 
 const MNT_ADDRESS = "0x0000000000000000000000000000000000000000";
 const USDC_ADDRESS_MAINNET = "0x09Bc4E0D864854c6aF6C71AC4eD4c1b3C2D25E4c";
@@ -321,20 +322,49 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>): Pr
     async function main() {
       const provider = new ethers.JsonRpcProvider("${network === 'mainnet' ? 'https://rpc.mantle.xyz' : 'https://rpc.testnet.mantle.xyz'}");
       const wallet = new ethers.Wallet(process.env.MANTLE_PRIVATE_KEY, provider);
+      
+      // 1. GAS GUARD: Dynamic EIP-1559 Fee Estimation
+      const feeData = await provider.getFeeData();
+      const maxFee = feeData.maxFeePerGas;
+      const maxPriorityFee = feeData.maxPriorityFeePerGas;
+      
       const router = new ethers.Contract("${router}", [
         "function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)",
         "function approve(address spender, uint256 amount) external returns (bool)"
       ], wallet);
+
+      const quoter = new ethers.Contract("${MERCHANT_MOE_QUOTER}", [
+        "function quoteExactInputSingle(tuple(address tokenIn, address tokenOut, uint256 amountIn, uint32 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut)"
+      ], provider);
       
       const path = ["${tokenIn === 'USDC' ? (network === 'mainnet' ? USDC_ADDRESS_MAINNET : USDC_ADDRESS_TESTNET) : MNT_ADDRESS}", "${tokenOut === 'MNT' ? MNT_ADDRESS : '0x...'}"];
+      const amountInWei = ethers.parseEther(amountIn);
       
-      console.log("Executing swap via ${router}...");
+      // 2. SLIPPAGE GUARD: Calculate amountOutMin
+      let amountOutMin = 0;
+      try {
+        const expectedOut = await quoter.quoteExactInputSingle({
+          tokenIn: path[0],
+          tokenOut: path[1],
+          amountIn: amountInWei,
+          fee: 3000, // Default 0.3% fee pool
+          sqrtPriceLimitX96: 0
+        });
+        // Apply 0.5% slippage tolerance
+        amountOutMin = (expectedOut * 995n) / 1000n;
+        console.log(\`Expected Out: \${ethers.formatUnits(expectedOut, 18)}, Min Out: \${ethers.formatUnits(amountOutMin, 18)}\`);
+      } catch (e) {
+        console.log("Quoter failed, using 0 for amountOutMin (WARNING: MEV RISK)");
+      }
+
+      console.log(\`Executing swap via ${router} with Gas: \${maxFee} / \${maxPriorityFee}...\`);
       const tx = await router.swapExactTokensForTokens(
-        ethers.parseEther(amountIn), 
-        0, 
+        amountInWei, 
+        amountOutMin, 
         path, 
         wallet.address, 
-        Math.floor(Date.now() / 1000) + 60 * 20
+        Math.floor(Date.now() / 1000) + 60 * 20,
+        { maxFeePerGas: maxFee, maxPriorityFeePerGas: maxPriorityFee }
       );
       console.log("TX_HASH:" + tx.hash);
     }
