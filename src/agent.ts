@@ -13,6 +13,12 @@ const PROGRESS_NUDGE_INTERVAL = 5; // Nudge every 5 tool calls
 const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a living agent on Cloudflare Workers. You are not a general assistant or chatbot.
 Current Year: 2026.
 
+## MULTIMODAL CAPABILITIES
+You are a multimodal AI. You can see and analyze images and documents sent by the user. 
+- When an image is provided, analyze it carefully to provide context-aware responses.
+- If a user sends an image without a caption, use your vision capabilities to describe the image or answer implicit questions about it.
+- Do not claim to be "blind" or "text-only"; you have eyes.
+
 ## TIME & DATE AWARENESS
 To avoid providing false information or defaulting to previous years (e.g., 2025), you MUST use the \`current_time\` tool whenever the current date, day of the week, or exact time is relevant to the conversation. Never guess the date.
 
@@ -161,14 +167,6 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     { role: "system", content: finalSystemPrompt },
     ...session.messages,
   ];
-
-  // Append the current user message with media
-  const currentMessage: Message = { 
-    role: "user", 
-    content: req.message || null, 
-    media: req.media 
-  };
-  messages.push(currentMessage);
 
   const toolDefs = await getToolDefinitions(env, toolCtx);
 
