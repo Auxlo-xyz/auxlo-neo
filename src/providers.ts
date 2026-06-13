@@ -195,8 +195,8 @@ export const BUILTIN: Record<string, ProviderConfig> = {
 };
 
 // Load custom providers from KV and convert to ProviderConfig
-export async function loadCustomProviders(env: Env): Promise<Record<string, ProviderConfig>> {
-  const raw = await env.CONFIG.get("custom_providers", "json");
+export async function loadCustomProviders(env: Env, userId: string): Promise<Record<string, ProviderConfig>> {
+  const raw = await env.CONFIG.get(`user:${userId}:custom_providers`, "json");
   if (!raw) return {};
   const customs = raw as CustomProviderConfig[];
   const result: Record<string, ProviderConfig> = {};
@@ -246,34 +246,36 @@ function customToProviderConfig(cp: CustomProviderConfig): ProviderConfig {
   };
 }
 
-export async function listProviders(env: Env): Promise<{ id: string; name: string; model: string; type: string }[]> {
+export async function listProviders(env: Env, userId: string): Promise<{ id: string; name: string; model: string; type: string }[]> {
   const result: { id: string; name: string; model: string; type: string }[] = [];
   for (const [id, cfg] of Object.entries(BUILTIN)) {
     const key = env[cfg.keyEnv];
     result.push({ id, name: cfg.name, model: cfg.defaultModel, type: key ? "builtin" : "builtin (no key)" });
   }
-  const customs = await loadCustomProviders(env);
+  const customs = await loadCustomProviders(env, userId);
   for (const [id, cfg] of Object.entries(customs)) {
     result.push({ id, name: cfg.name, model: cfg.defaultModel, type: "custom" });
   }
   return result;
 }
 
-export async function addCustomProvider(env: Env, cp: CustomProviderConfig): Promise<void> {
-  const raw = await env.CONFIG.get("custom_providers", "json");
+export async function addCustomProvider(env: Env, userId: string, cp: CustomProviderConfig): Promise<void> {
+  const raw = await env.CONFIG.get(`user:${userId}:custom_providers`, "json");
   const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
   const idx = customs.findIndex((c) => c.id === cp.id);
   if (idx >= 0) customs[idx] = cp;
   else customs.push(cp);
-  await env.CONFIG.put("custom_providers", JSON.stringify(customs));
+  await env.CONFIG.put(`user:${userId}:custom_providers`, JSON.stringify(customs));
+  await env.CONFIG.put(`user:${userId}:custom_provider:${cp.id}`, JSON.stringify(cp));
 }
 
-export async function removeCustomProvider(env: Env, id: string): Promise<boolean> {
-  const raw = await env.CONFIG.get("custom_providers", "json");
+export async function removeCustomProvider(env: Env, userId: string, id: string): Promise<boolean> {
+  const raw = await env.CONFIG.get(`user:${userId}:custom_providers`, "json");
   const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
   const filtered = customs.filter((c) => c.id !== id);
   if (filtered.length === customs.length) return false;
-  await env.CONFIG.put("custom_providers", JSON.stringify(filtered));
+  await env.CONFIG.put(`user:${userId}:custom_providers`, JSON.stringify(filtered));
+  await env.CONFIG.delete(`user:${userId}:custom_provider:${id}`);
   return true;
 }
 
@@ -298,7 +300,9 @@ export async function callProvider(env: Env, providerName: string, req: Provider
     apiKey = env[config.keyEnv] || "";
     if (!apiKey) throw new Error(`Missing API key for ${providerName}. Set ${config.keyEnv} as a secret.`);
   } else {
-    const customs = await loadCustomProviders(env);
+    const userId = req.userId;
+    if (!userId) throw new Error(`userId is required to load custom providers.`);
+    const customs = await loadCustomProviders(env, userId);
     config = customs[providerName];
     if (!config) throw new Error(`Unknown provider: ${providerName}. Available: ${[...Object.keys(BUILTIN), ...Object.keys(customs)].join(", ")}`);
     apiKey = ""; // key is embedded in headers via customToProviderConfig

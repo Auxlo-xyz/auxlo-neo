@@ -165,15 +165,16 @@ Provide a structured report with:
 // Lazy skill loader (loads full content only when activated)
 export async function getSkillContent(
   env: Env,
+  userId: string,
   skillId: string
 ): Promise<Skill | null> {
   // Check built-in skills first
   const builtin = BUILTIN_SKILLS.find((s) => s.id === skillId);
   if (builtin) return builtin;
 
-  // Check custom skills in KV
+  // Check custom skills in KV (user-isolated)
   try {
-    const raw = await env.CONFIG.get(`skill:${skillId}`, "json");
+    const raw = await env.CONFIG.get(`user:${userId}:skill:${skillId}`, "json");
     if (raw) return raw as Skill;
   } catch {
     // ignore
@@ -182,13 +183,18 @@ export async function getSkillContent(
   return null;
 }
 
-export async function listSkills(env: Env): Promise<Skill[]> {
+export async function listSkills(env: Env, userId: string): Promise<Skill[]> {
   const customs: Skill[] = [];
   try {
-    const keys = await env.CONFIG.list({ prefix: "skill:", limit: 100 });
+    const keys = await env.CONFIG.list({ prefix: `user:${userId}:skill:`, limit: 100 });
     for (const key of keys.keys) {
       const raw = await env.CONFIG.get(key.name, "json");
-      if (raw) customs.push(raw as Skill);
+      if (raw) {
+        const skill = raw as Skill;
+        // Strip the user prefix from the ID for the UI/Agent
+        skill.id = key.name.replace(`user:${userId}:skill:`, "");
+        customs.push(skill);
+      }
     }
   } catch {
     // ignore
@@ -196,12 +202,12 @@ export async function listSkills(env: Env): Promise<Skill[]> {
   return [...BUILTIN_SKILLS, ...customs];
 }
 
-export async function registerSkill(env: Env, skill: Skill): Promise<void> {
-  await env.CONFIG.put(`skill:${skill.id}`, JSON.stringify(skill));
+export async function registerSkill(env: Env, userId: string, skill: Skill): Promise<void> {
+  await env.CONFIG.put(`user:${userId}:skill:${skill.id}`, JSON.stringify(skill));
 }
 
-export async function unregisterSkill(env: Env, skillId: string): Promise<boolean> {
-  const key = `skill:${skillId}`;
+export async function unregisterSkill(env: Env, userId: string, skillId: string): Promise<boolean> {
+  const key = `user:${userId}:skill:${skillId}`;
   const existing = await env.CONFIG.get(key, "json");
   if (!existing) return false;
   await env.CONFIG.delete(key);

@@ -58,20 +58,20 @@ interface WalletWizardState {
 // ---- Bot commands for menu ----
 
 const BOT_COMMANDS = [
-  { command: "start", description: "Welcome message" },
-  { command: "help", description: "Show all commands" },
+  { command: "start", description: "Get started with AuxloNeo" },
+  { command: "help", description: "List all available commands" },
   { command: "reset", description: "Clear conversation history" },
   { command: "model", description: "Switch AI model" },
   { command: "provider", description: "Switch provider" },
   { command: "endpoint", description: "Add custom API endpoint" },
-  { command: "persona", description: "Set system prompt" },
+  { command: "endpoints", description: "List your saved endpoints" },
+  { command: "persona", description: "Set my personality/prompt" },
   { command: "status", description: "Show current session info" },
-  { command: "endpoints", description: "List saved endpoints" },
   { command: "usage", description: "Show token usage stats" },
   { command: "wallet", description: "Manage your Mantle wallet" },
-  { command: "grant", description: "Share your data with another user" },
+  { command: "grant", description: "Share data with another user" },
   { command: "revoke", description: "Revoke data sharing" },
-  { command: "shares", description: "List your shared resources" },
+  { command: "shares", description: "List shared resources" },
 ];
 
 // ---- Helpers ----
@@ -343,17 +343,15 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
       type: wizard.type,
     };
 
-    // Save to custom_providers array
-    const raw = await env.CONFIG.get("custom_providers", "json");
-    const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
-    const idx = customs.findIndex((c) => c.id === config.id);
-    if (idx >= 0) customs[idx] = config;
-    else customs.push(config);
-    await env.CONFIG.put("custom_providers", JSON.stringify(customs));
+    // Save to user-isolated custom_providers array
+    const { addCustomProvider } = await import("../providers");
+    await addCustomProvider(env, userId, config);
 
-    // Also save individual key
-    await env.CONFIG.put(`custom_provider:${config.id}`, JSON.stringify(config));
-
+    // Also save individual key (handled by addCustomProvider internally now, but we can be explicit if needed)
+    // Actually addCustomProvider only saves the list. Let's check providers.ts.
+    // Looking at providers.ts, it only saves the list. 
+    // I should update providers.ts to also save the individual key for consistency if it was there before.
+    
     await clearWizardState(env, userId);
     await answerCallback(env, cb.id, "Saved!");
     if (messageId) {
@@ -382,11 +380,12 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
   // ---- Delete endpoint ----
   if (data.startsWith("del_endpoint:")) {
     const endpointId = data.split(":")[1];
-    const raw = await env.CONFIG.get("custom_providers", "json");
-    const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
-    const filtered = customs.filter((c) => c.id !== endpointId);
-    await env.CONFIG.put("custom_providers", JSON.stringify(filtered));
-    await env.CONFIG.delete(`custom_provider:${endpointId}`);
+    const { removeCustomProvider } = await import("../providers");
+    const success = await removeCustomProvider(env, userId, endpointId);
+    if (!success) {
+      await answerCallback(env, cb.id, "Endpoint not found.");
+      return;
+    }
     await answerCallback(env, cb.id, "Deleted");
     if (messageId) {
       await editText(env, chatId, messageId, `Endpoint \`${endpointId}\` deleted.`);
@@ -491,8 +490,15 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     switch (cmd.command) {
       case "start":
         await sendText(env, chatId,
-          "Welcome to AuxloNeo. Your edge-native AI assistant.\n\n" +
-          "Send any message and I'll respond. Use /help to see commands."
+          "Welcome to *AuxloNeo* 🚀\n\n" +
+          "I'm your edge-native AI assistant, running entirely on Cloudflare Workers. I'm designed for speed, privacy, and autonomy.\n\n" +
+          "✨ *What I can do for you:*\n" +
+          "💬 *Smart Chat*: Just start typing! I can analyze images and documents you send.\n" +
+          "🛠 *Custom AI*: Use `/endpoint` to add your own LLM providers or `/model` to switch the current brain.\n" +
+          "🎭 *Persona*: Customize how I behave or my system prompt using `/persona`.\n" +
+          "💰 *Mantle Wallet*: Create or import a wallet with `/wallet` to enable autonomous yield strategies on Mantle.\n" +
+          "🤝 *Data Sharing*: Share your session context or tools with other users using `/grant`.\n\n" +
+          "Check `/help` for a full list of commands. How can I help you today?"
         );
         return;
 
@@ -540,8 +546,9 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         return;
 
       case "endpoints": {
-        const raw = await env.CONFIG.get("custom_providers", "json");
-        const customs: CustomProviderConfig[] = (raw as CustomProviderConfig[]) || [];
+        const { listProviders } = await import("../providers");
+        const providers = await listProviders(env, userId);
+        const customs = providers.filter(p => p.type === "custom");
         if (customs.length === 0) {
           await sendText(env, chatId, "No custom endpoints saved. Use /endpoint to add one.");
           return;

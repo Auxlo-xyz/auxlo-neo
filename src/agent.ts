@@ -100,9 +100,10 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   // If no provider resolved, try custom providers in KV, then fall back to "openai"
   if (!providerId) {
     try {
-      const raw = await env.CONFIG.get("custom_providers", "json");
-      const customs: { id: string }[] = (raw as { id: string }[]) || [];
-      if (customs.length > 0) providerId = customs[0].id;
+      const customs = await loadCustomProviders(env, userId!);
+      if (Object.keys(customs).length > 0) {
+        providerId = Object.keys(customs)[0];
+      }
     } catch { /* ignore */ }
     if (!providerId) providerId = "openai";
   }
@@ -110,7 +111,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   // Resolve actual provider config to get name and default model
   let providerConfig: any = BUILTIN[providerId];
   if (!providerConfig) {
-    const customs = await loadCustomProviders(env);
+    const customs = await loadCustomProviders(env, userId!);
     providerConfig = customs[providerId];
   }
 
@@ -156,7 +157,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     }
   }
 
-  const skills = await listSkills(env);
+  const skills = await listSkills(env, userId!);
   const skillTitles = skills.map(s => s.id).join(", ");
   const skillSection = skillTitles ? `\n\nAvailable Skills (use \`use_skill\` to load, \`register_skill\` to add, \`unregister_skill\` to remove):\n${skillTitles}` : "";
 
@@ -194,6 +195,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
       tools: toolDefs.length > 0 ? toolDefs : undefined,
       max_tokens: req.max_tokens,
       temperature: req.temperature,
+      userId: userId,
     };
 
     const result = await callProvider(env, providerId, providerReq);

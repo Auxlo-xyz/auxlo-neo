@@ -120,6 +120,7 @@ export interface ProviderRequest {
   model?: string;
   max_tokens?: number;
   temperature?: number;
+  userId?: string;
 }
 
 export interface ProviderResponse {
