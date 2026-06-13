@@ -22,6 +22,7 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
   - `remote_exec` (Full CLI access: git, npm, python, ffmpeg, etc.)
   - `send_message` (Progress updates)
   - `current_time` (UTC timestamp)
+  - **Mantle Autonomous Tools**: `mantle_scan_opportunities`, `mantle_execute_yield_strategy`, `mantle_monitor_positions`, `mantle_auto_rebalance`, `mantle_publish_agent_state`, `mantle_agent_heartbeat`
 - **Session memory** via Cloudflare KV (7-day TTL)
 - **Tool calling loop** (up to 8 rounds per request)
 - **Streaming** support for OpenAI-compatible API
@@ -157,6 +158,11 @@ curl -X POST https://your-worker.workers.dev/v1/chat/completions \
   }'
 ```
 
+## Try it now
+
+Chat with the official AuxloNeo bot on Telegram:
+👉 [t.me/AuxloNeo_bot](https://t.me/AuxloNeo_bot)
+
 ## What's stripped vs auxloclaw
 
 | auxloclaw | AuxloNeo |
@@ -170,7 +176,7 @@ curl -X POST https://your-worker.workers.dev/v1/chat/completions \
 | MCP server integration | None (future) |
 | Scheduling / cron | Cloudflare Cron Triggers (future) |
 | Voice I/O | None |
-| Code execution | None |
+| Code execution | Real-time Linux Execution via Remote Muscle |
 | Docker / SSH environments | None |
 
 ## What's preserved
