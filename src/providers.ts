@@ -314,7 +314,7 @@ export async function callProvider(env: Env, providerName: string, req: Provider
     body = await config.transformRequest(req, model);
   } else {
     // OpenAI-compatible transformation with multimodal support
-    const messages = req.messages.map((m) => {
+    const messages = await Promise.all(req.messages.map(async (m) => {
       if (m.role === "system") return m;
       
       const content: any[] = [];
@@ -322,10 +322,18 @@ export async function callProvider(env: Env, providerName: string, req: Provider
       if (m.media) {
         for (const media of m.media) {
           if (media.type === "image") {
-            content.push({
-              type: "image_url",
-              image_url: { url: media.url },
-            });
+            try {
+              const resp = await fetch(media.url);
+              const buffer = await resp.arrayBuffer();
+              const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+              const mimeType = resp.headers.get("content-type") || "image/jpeg";
+              content.push({
+                type: "image_url",
+                image_url: { url: `data:${mimeType};base64,${base64}` },
+              });
+            } catch (e) {
+              console.error(`Failed to fetch image for multimodal input: ${e}`);
+            }
           }
         }
       }
@@ -334,7 +342,7 @@ export async function callProvider(env: Env, providerName: string, req: Provider
         ...m,
         content: content.length > 0 ? content : m.content,
       };
-    });
+    }));
 
     body = { 
       model, 
