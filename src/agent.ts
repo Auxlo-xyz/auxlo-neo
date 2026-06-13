@@ -109,7 +109,9 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
 
   // Extract channel context from session ID
   const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
-  const userId = req.userId || (sessionId.split(":")[1]) || undefined;
+  
+  // Resolve userId: request userId > session prefix > fallback
+  const userId = req.userId || (sessionId.includes(":") ? sessionId : undefined);
   const toolCtx = { channel, sessionId, userId };
 
   // Add user message
@@ -143,7 +145,9 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   const skills = await listSkills(env);
   const skillTitles = skills.map(s => s.id).join(", ");
   const skillSection = skillTitles ? `\n\nAvailable Skills (use \`use_skill\` to load, \`register_skill\` to add, \`unregister_skill\` to remove):\n${skillTitles}` : "";
-const finalSystemPrompt = `${fullSystem}${walletContext}${skillSection}\n\nCurrently running on model: ${model} via ${providerDisplayName}.`;
+
+  // Move walletContext to the top and make it highly prominent to prevent AI from ignoring it
+  const finalSystemPrompt = `${walletContext}\n\n${fullSystem}${skillSection}\n\nCurrently running on model: ${model} via ${providerDisplayName}.`;
 
   const messages: Message[] = [
     { role: "system", content: finalSystemPrompt },
