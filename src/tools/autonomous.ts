@@ -194,6 +194,36 @@ export function getAutonomousToolDefinitions(): ToolDefinition[] {
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "mantle_wallet_create",
+        description: "Generate a new Mantle wallet. Returns the address and private key (ONE-TIME).",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "mantle_wallet_import",
+        description: "Import an existing Mantle wallet using a private key.",
+        parameters: {
+          type: "object",
+          properties: {
+            private_key: { type: "string", description: "Wallet private key (0x...)" },
+          },
+          required: ["private_key"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "mantle_wallet_status",
+        description: "Get status and balance of the active user wallet.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
   ];
 }
 
@@ -220,6 +250,12 @@ export async function executeAutonomousTool(
         return await publishAgentState(env, args);
       case "mantle_agent_heartbeat":
         return await agentHeartbeat(env, args);
+      case "mantle_wallet_create":
+        return await createWallet(env, args);
+      case "mantle_wallet_import":
+        return await importWallet(env, args);
+      case "mantle_wallet_status":
+        return await walletStatus(env, args);
       default:
         return { content: `Unknown autonomous tool: ${name}`, error: true };
     }
@@ -605,4 +641,27 @@ async function agentHeartbeat(env: Env, args: Record<string, unknown>): Promise<
   } catch (err: any) {
     return { content: `Heartbeat failed: ${err.message}`, error: true };
   }
+}
+
+async function createWallet(env: Env, _args: Record<string, unknown>): Promise<ToolResult> {
+  const genCmd = `npm install ethers && node -e "const { ethers } = require('ethers'); const w = ethers.Wallet.createRandom(); console.log(w.address + '\\n' + w.privateKey)"`;
+  const res = await remoteExec(genCmd, env);
+  if (res.error || !res.content) return { content: `Wallet generation failed: ${res.content}`, error: true };
+  const [address, privKey] = res.content.trim().split('\\n');
+  return { content: `New Wallet Created.\nAddress: ${address}\nPrivate Key: ${privKey}\n\n⚠️ SAVE THIS KEY IMMEDIATELY!` };
+}
+
+async function importWallet(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
+  const key = args.private_key as string;
+  if (!key || !key.startsWith("0x")) return { content: "Invalid private key. Must start with 0x.", error: true };
+  const verifyCmd = `node -e "const { ethers } = require('ethers'); console.log(new ethers.Wallet('${key}').address)"`;
+  const res = await remoteExec(verifyCmd, env);
+  if (res.error || !res.content) return { content: "Invalid private key. Import failed.", error: true };
+  return { content: `Wallet imported successfully! Address: ${res.content.trim()}` };
+}
+
+async function walletStatus(env: Env, args: Record<string, unknown>): Promise<ToolResult> {
+  const wallet = args.wallet as string;
+  if (!wallet || !wallet.startsWith("0x")) return { content: "Invalid wallet address.", error: true };
+  return await agentHeartbeat(env, { wallet, network: "mainnet" });
 }
