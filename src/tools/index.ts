@@ -4,6 +4,7 @@ import { twitter } from "./platforms/twitter";
 import { youtube } from "./platforms/youtube";
 import { getMantleChainToolDefinitions, executeMantleChainTool } from "../skills/mantle-chain";
 import { getByrealToolDefinitions, executeByrealTool } from "../skills/byreal-cli-wrapper";
+import { getAutonomousToolDefinitions, executeAutonomousTool } from "./autonomous";
 
 interface ToolContext {
   channel?: string;
@@ -193,6 +194,10 @@ export async function getToolDefinitions(env: Env, ctx?: ToolContext): Promise<T
   const byrealTools = getByrealToolDefinitions();
   tools.push(...byrealTools);
 
+  // Load autonomous Mantle agent tools if available
+  const autonomousTools = getAutonomousToolDefinitions();
+  tools.push(...autonomousTools);
+
   return tools;
 }
 
@@ -242,6 +247,13 @@ export async function executeTool(
       case "byreal_swap_execute":
       case "byreal_wallet_balance":
         return await executeByrealTool(env, name, args);
+      case "mantle_scan_opportunities":
+ case "mantle_execute_yield_strategy":
+ case "mantle_monitor_positions":
+ case "mantle_auto_rebalance":
+ case "mantle_publish_agent_state":
+ case "mantle_agent_heartbeat":
+        return await executeAutonomousTool(env, name, args);
       default:
         return { content: `Unknown tool: ${name}`, error: true };
     }

@@ -147,7 +147,7 @@ export async function executeAutonomousTool(
  ``,
  `echo "=== MANTLE DeFi Scan ==="`,
  `echo "Protocols: ${protocols.join(", ")}"`,
- `echo "Min APR: ${minApr}% | Min TVL: $$(minTvl}"`,
+ `echo "Min APR: ${minApr}% | Min TVL: ${minTvl}"`,
  ``,
  `# Simulated multi-protocol scan results`,
  `echo "--- Merchant Moe ---"`,
