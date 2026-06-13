@@ -52,6 +52,7 @@ async function remoteExec(command: string, env: Env): Promise<ToolResult> {
   }
 
   try {
+    console.log(`[RemoteExec] Requesting: ${executorUrl}`);
     const response = await fetch(executorUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -62,7 +63,8 @@ async function remoteExec(command: string, env: Env): Promise<ToolResult> {
     });
 
     if (!response.ok) {
-      return { content: `Executor HTTP ${response.status}`, error: true };
+      console.error(`[RemoteExec] Error: ${response.status} ${response.statusText} for URL: ${executorUrl}`);
+      return { content: `Executor error: HTTP ${response.status} (${response.statusText}) for ${executorUrl}`, error: true };
     }
 
     const data: any = await response.json();
