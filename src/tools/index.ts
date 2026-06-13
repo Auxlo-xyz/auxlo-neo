@@ -593,13 +593,16 @@ async function toolXFetch(fetchType: string, id: string): Promise<ToolResult> {
 
   if (fetchType === "tweet") {
     const text = data.text || "";
-    const author = data.author?.name || "Unknown";
-    const handle = data.author?.screenName || "";
+    const author = data.user_name || "Unknown";
+    const handle = data.user_screen_name || "";
     const likes = data.likes || 0;
     const retweets = data.retweets || 0;
     const replies = data.replies || 0;
     const date = data.date || "";
     const media = data.mediaURLs?.length ? data.mediaURLs.join(", ") : "none";
+    const hashtags = data.hashtags?.length ? data.hashtags.join(", ") : "none";
+    const qrt = data.qrtURL || "none";
+    const convId = data.conversationID || "none";
 
     return {
       content: [
@@ -609,23 +612,27 @@ async function toolXFetch(fetchType: string, id: string): Promise<ToolResult> {
         text,
         "",
         `Likes: ${likes} | Retweets: ${retweets} | Replies: ${replies}`,
-        media !== "none" ? `Media: ${media}` : "",
+        `Hashtags: ${hashtags}`,
+        `Media: ${media}`,
+        `Quote RT: ${qrt}`,
+        `Conversation ID: ${convId}`,
       ].filter(Boolean).join("\n"),
     };
   }
 
   // user
   const name = data.name || id;
-  const bio = data.bio || "No bio";
-  const followers = data.followers || 0;
-  const following = data.following || 0;
-  const tweets = data.statusesCount || 0;
-  const verified = data.verified || false;
+  const bio = data.description || "No bio";
+  const followers = data.followers_count || 0;
+  const following = data.following_count || 0;
+  const tweets = data.tweet_count || 0;
+  const location = data.location || "Unknown";
 
   return {
     content: [
-      `${name} (@${id})${verified ? " [Verified]" : ""}`,
-      bio,
+      `${name} (@${data.screen_name || id})`,
+      `Bio: ${bio}`,
+      `Location: ${location}`,
       `Followers: ${followers} | Following: ${following} | Tweets: ${tweets}`,
     ].join("\n"),
   };
