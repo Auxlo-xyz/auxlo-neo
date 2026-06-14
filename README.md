@@ -253,3 +253,7 @@ Chat with the official AuxloNeo bot on Telegram:
 ## License
 
 MIT
+
+This project is open source.
+
+Made with ❤️ by Auxlo.xyz
