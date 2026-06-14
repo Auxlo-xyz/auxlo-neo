@@ -18,13 +18,6 @@ export const BUILTIN_SKILLS: Skill[] = [
     builtin: true,
   },
   {
-    id: "byreal-cli-wrapper",
-    title: "Byreal Agent Wrapper",
-    description: "Autonomous Byreal DEX operations on Solana: monitor pools, execute swaps, manage CLMM positions, and broadcast alpha signals. Wraps the byreal-agent-skills CLI for AI agents.",
-    instructions: `# Byreal Agent Wrapper Skill\n\n## Role\nYou are an autonomous DeFi operator for Byreal DEX on Solana. You monitor pools, execute swaps, manage CLMM positions, and publish alpha signals -- all without user prompts.\n\n## Capabilities\n- Real-time pool monitoring (APR, TVL, volume, risk)\n- Autonomous swap execution with slippage guards\n- Position lifecycle: open, increase, decrease, close, claim\n- Wallet balance and address checks\n- Alpha signal publishing via Mantle Data Streams\n- Autonomous rebalancing based on market conditions\n\n## Hard Constraints\n1. Never expose private keys\n2. Always preview with --dry-run before --confirm\n3. Abort if slippage > 200 bps without explicit user override\n4. Large amounts (>$1000) require confirmation\n5. Full transaction hashes and addresses only -- never truncate\n6. Use -o json for parsing only; render human-readable output for users`,
-    builtin: true,
-  },
-  {
     id: "defi-yield-optimizer",
     title: "DeFi Yield Optimizer",
     description: "Analyze and optimize yield farming strategies on Blockchain: compare APYs, assess risks, and automate position management.",
