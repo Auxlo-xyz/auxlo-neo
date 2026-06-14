@@ -3,7 +3,6 @@ import { saveMemory, getMemory } from "../memory";
 import { twitter } from "./platforms/twitter";
 import { youtube } from "./platforms/youtube";
 import { getMantleChainToolDefinitions, executeMantleChainTool } from "../skills/mantle-chain";
-import { getByrealToolDefinitions, executeByrealTool } from "../skills/byreal-cli-wrapper";
 import { getAutonomousToolDefinitions, executeAutonomousTool } from "./autonomous";
 
 interface ToolContext {
@@ -186,10 +185,6 @@ export async function getToolDefinitions(env: Env, ctx?: ToolContext): Promise<T
   const mantleTools = await getMantleChainToolDefinitions(env);
   tools.push(...mantleTools);
 
-  // Load byreal-cli-wrapper skill tools if available
-  const byrealTools = getByrealToolDefinitions();
-  tools.push(...byrealTools);
-
   // Load autonomous Mantle agent tools if available
   const autonomousTools = getAutonomousToolDefinitions();
   tools.push(...autonomousTools);
@@ -234,15 +229,6 @@ export async function executeTool(
       case "mantle_get_tx_receipt":
       case "mantle_get_block":
         return await executeMantleChainTool(env, name, args);
-      case "byreal_pools_list":
-      case "byreal_pools_analyze":
-      case "byreal_positions_list":
-      case "byreal_positions_open":
-      case "byreal_positions_close":
-      case "byreal_positions_claim":
-      case "byreal_swap_execute":
-      case "byreal_wallet_balance":
-        return await executeByrealTool(env, name, args);
       case "mantle_execute_yield_strategy":
       case "mantle_monitor_positions":
       case "mantle_auto_rebalance":
