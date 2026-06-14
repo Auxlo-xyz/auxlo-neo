@@ -55,6 +55,12 @@ interface WalletWizardState {
   started_at: number;
 }
 
+interface GuardWizardState {
+  temp_usd: number;
+  temp_slip: number;
+  started_at: number;
+}
+
 // ---- Bot commands for menu ----
 
 const BOT_COMMANDS = [
@@ -193,6 +199,19 @@ async function clearWizardState(env: Env, userId: string): Promise<void> {
   await env.CONFIG.delete(`wizard:${userId}`);
 }
 
+async function getGuardWizardState(env: Env, userId: string): Promise<GuardWizardState | null> {
+  const raw = await env.CONFIG.get(`guard_wizard:${userId}`, "json");
+  return raw as GuardWizardState | null;
+}
+
+async function setGuardWizardState(env: Env, userId: string, state: GuardWizardState): Promise<void> {
+  await env.CONFIG.put(`guard_wizard:${userId}`, JSON.stringify(state), { expirationTtl: 600 });
+}
+
+async function clearGuardWizardState(env: Env, userId: string): Promise<void> {
+  await env.CONFIG.delete(`guard_wizard:${userId}`);
+}
+
 // ---- Keyboard builders ----
 
 function providerKeyboard(providers: { id: string; name: string; model: string; type: string }[]): Record<string, unknown> {
@@ -252,6 +271,16 @@ function confirmKeyboard(): Record<string, unknown> {
 
 function cancelKeyboard(): Record<string, unknown> {
   return { inline_keyboard: [[{ text: "Cancel", callback_data: "endpoint_cancel" }]] };
+}
+
+function guardKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "Set Max USD Limit", callback_data: "guard_set_limit" }, { text: "Set Slippage %", callback_data: "guard_set_slippage" }],
+      [{ text: "View Current Limits", callback_data: "guard_status" }],
+      [{ text: "Cancel", callback_data: "guard_cancel" }],
+    ],
+  };
 }
 
 // ---- Callback query handler ----
@@ -379,6 +408,53 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     return;
   }
 
+  // ---- Guard Wizard callbacks ----
+  if (data === "guard_cancel") {
+    await clearGuardWizardState(env, userId);
+    await answerCallback(env, cb.id, "Cancelled");
+    if (messageId) {
+      await editText(env, chatId, messageId, "Guard configuration cancelled.");
+    }
+    return;
+  }
+
+  if (data === "guard_status") {
+    const limits = (await env.CONFIG.get(`limits:${userId}`, "json")) as any || {
+      max_trade_value_usd: 500,
+      max_slippage_pct: 0.5,
+      allowed_protocols: ["merchant-moe", "agni-finance"]
+    };
+    await answerCallback(env, cb.id, "Showing limits...");
+    if (messageId) {
+      await editText(env, chatId, messageId, 
+        `*Your Current Risk Guard*\n\n` +
+        `Max Trade: \`${limits.max_trade_value_usd} USD\`\n` +
+        `Max Slippage: \`${limits.max_slippage_pct}%\`\n` +
+        `Protocols: \`${limits.allowed_protocols.join(", ")}\``, 
+        guardKeyboard()
+      );
+    }
+    return;
+  }
+
+  if (data === "guard_set_limit") {
+    await setGuardWizardState(env, userId, { step: "limit", started_at: Date.now() });
+    await answerCallback(env, cb.id, "Enter Limit");
+    if (messageId) {
+      await editText(env, chatId, messageId, "Please send the *Max Trade Value in USD* (e.g. 1000).", cancelKeyboard());
+    }
+    return;
+  }
+
+  if (data === "guard_set_slippage") {
+    await setGuardWizardState(env, userId, { step: "slippage", started_at: Date.now() });
+    await answerCallback(env, cb.id, "Enter Slippage");
+    if (messageId) {
+      await editText(env, chatId, messageId, "Please send the *Max Slippage Percentage* (e.g. 0.5 for 0.5%).", cancelKeyboard());
+    }
+    return;
+  }
+
   // ---- Delete endpoint ----
   if (data.startsWith("del_endpoint:")) {
     const endpointId = data.split(":")[1];
@@ -484,6 +560,52 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       }
     }
     return;
+  }
+
+  // ---- Check if user is in guard wizard ----
+  const guardWizard = await getGuardWizardState(env, userId);
+  if (guardWizard) {
+    if (text === "/cancel" || text === "/guard") {
+      await clearGuardWizardState(env, userId);
+      await sendText(env, chatId, "Guard configuration cancelled.");
+      return;
+    }
+
+    if (guardWizard.step === "limit") {
+      const value = parseFloat(text);
+      if (isNaN(value) || value <= 0) {
+        await sendText(env, chatId, "Invalid number. Please send a positive number for the USD limit (e.g. 1000).", cancelKeyboard());
+        return;
+      }
+      const limits = (await env.CONFIG.get(`limits:${userId}`, "json")) as any || {
+        max_trade_value_usd: 500,
+        max_slippage_pct: 0.5,
+        allowed_protocols: ["merchant-moe", "agni-finance"]
+      };
+      limits.max_trade_value_usd = value;
+      await env.CONFIG.put(`limits:${userId}`, JSON.stringify(limits));
+      await clearGuardWizardState(env, userId);
+      await sendText(env, chatId, `✅ Max trade limit updated to *${value} USD*.`, guardKeyboard());
+      return;
+    }
+
+    if (guardWizard.step === "slippage") {
+      const value = parseFloat(text);
+      if (isNaN(value) || value <= 0) {
+        await sendText(env, chatId, "Invalid number. Please send a positive number for slippage (e.g. 0.5).", cancelKeyboard());
+        return;
+      }
+      const limits = (await env.CONFIG.get(`limits:${userId}`, "json")) as any || {
+        max_trade_value_usd: 500,
+        max_slippage_pct: 0.5,
+        allowed_protocols: ["merchant-moe", "agni-finance"]
+      };
+      limits.max_slippage_pct = value;
+      await env.CONFIG.put(`limits:${userId}`, JSON.stringify(limits));
+      await clearGuardWizardState(env, userId);
+      await sendText(env, chatId, `✅ Max slippage updated to *${value}%*.`, guardKeyboard());
+      return;
+    }
   }
 
   // ---- Parse and handle commands ----
@@ -763,6 +885,11 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         return;
       }
 
+      case "guard": {
+        await sendText(env, chatId, "🛡️ *Risk Guard Configuration*\n\nManage your autonomous trading limits to prevent hallucinations and protect your capital.", guardKeyboard());
+        return;
+      }
+
       case "revoke": {
         const { handleRevokeCommand } = await import("../grant-commands");
         const result = await handleRevokeCommand(env, userId, cmd.args || "");
@@ -774,49 +901,6 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         const { handleListSharesCommand } = await import("../grant-commands");
         const result = await handleListSharesCommand(env, userId);
         await sendText(env, chatId, result.message);
-        return;
-      }
-
-      case "guard": {
-        const { executeTool } = await import("../tools");
-        if (!cmd.args) {
-          await sendText(env, chatId, "🛡️ *Execution Guard*\n\nSet your on-chain risk limits to prevent AI hallucinations from draining your wallet.\n\nUsage:\n/guard status - View current limits\n/guard reset - Reset to defaults\n/guard <usd_limit> <slippage_pct>\n\nExample: \`/guard 500 0.5\` (Set max trade to $500 and slippage to 0.5%)");
-          return;
-        }
-
-        if (cmd.args === "status") {
-          const limits = await env.CONFIG.get(`limits:${userId}`, "json");
-          if (!limits) {
-            await sendText(env, chatId, "No custom limits set. Using system defaults: $500 max trade, 0.5% slippage.");
-            return;
-          }
-          const l = limits as any;
-          await sendText(env, chatId, `🛡️ *Current Risk Limits*\n\nMax Trade: \`${l.max_trade_value_usd} USD\`\nMax Slippage: \`${l.max_slippage_pct}%\`\nAllowed Protocols: \`${l.allowed_protocols?.join(", ") || "Default"}\``);
-          return;
-        }
-
-        if (cmd.args === "reset") {
-          await env.CONFIG.delete(`limits:${userId}`);
-          await sendText(env, chatId, "Risk limits reset to defaults.");
-          return;
-        }
-
-        const parts = cmd.args.split(/\s+/);
-        if (parts.length < 2) {
-          await sendText(env, chatId, "Invalid format. Use: \`/guard <usd_limit> <slippage_pct>\`\nExample: \`/guard 500 0.5\`");
-          return;
-        }
-
-        const usd = parseFloat(parts[0]);
-        const slip = parseFloat(parts[1]);
-
-        if (isNaN(usd) || isNaN(slip)) {
-          await sendText(env, chatId, "Please provide numbers for both limits.");
-          return;
-        }
-
-        const res = await executeTool(env, "mantle_set_policy", { max_trade_value_usd: usd, max_slippage_pct: slip }, { channel: "telegram", sessionId });
-        await sendText(env, chatId, res.content || "Policy updated successfully.");
         return;
       }
 
