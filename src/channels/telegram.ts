@@ -399,20 +399,17 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     const userId = `telegram:${cb.from.id.toString()}`;
     await answerCallback(env, cb.id, "Loading resources...");
 
-    // Discover sessions for this user from KV
-    const sessions = await env.SESSIONS.list({ prefix: `session:telegram:${cb.from.id}` });
-    const resourceIds = sessions.keys.map(k => k.name);
+    // Discover sessions belonging to the user
+    const sessionsList = await env.SESSIONS.list({ prefix: `session:telegram:${cb.from.id}` });
+    const resources = sessionsList.keys.map(k => k.name.replace("session:", ""));
 
-    if (resourceIds.length === 0) {
-      await sendText(env, cb.message?.chat.id || 0, "No active sessions found to share.");
+    if (resources.length === 0) {
+      await sendText(env, chatId, "No active sessions found to share.");
       return;
     }
 
     await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
-    const chatId = cb.message?.chat.id;
-    if (chatId) {
-      await sendText(env, chatId, "Select the session you would like to share:", resourceKeyboard(resourceIds));
-    }
+    await sendText(env, chatId, "What resource would you like to share?", resourceKeyboard(resources));
     return;
   }
 
@@ -648,7 +645,7 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
 
     await setGrantWizardState(env, userId, {
       step: "permission",
-      resourceId,
+      resourceId: `session:${resourceId}`,
       started_at: Date.now(),
     });
 
