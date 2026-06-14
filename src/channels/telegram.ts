@@ -579,6 +579,22 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   let text = msg.text || msg.caption || "";
   const sessionId = `telegram:${chatId}`;
 
+  // Handle /start command specifically for the welcome message
+  if (text === "/start") {
+    const welcomeMsg = "welcome to auxloneo. i'm your edge-native agent, living on the mantle chain.\n\n" +
+      "here is what i can do:\n\n" +
+      "- *smart chat*: just start typing. i can see images and docs.\n\n" +
+      "- *custom ai*: use /endpoint for your own providers or /model to switch brains.\n\n" +
+      "- *persona*: tweak how i act with /persona.\n\n" +
+      "- *mantle wallet*: /wallet lets me handle yield strategies and balance checks on mantle.\n\n" +
+      "- *risk guard*: /guard lets you set safety limits for autonomous trades.\n\n" +
+      "- *data sharing*: /grant lets you share context with others.\n\n" +
+      "check /help for the full list.";
+    
+    await sendText(env, chatId, welcomeMsg);
+    return;
+  }
+
   // Strip bot mention from the start of the message (e.g., "@AuxloNeo hello" -> "hello")
   if (text.startsWith("@")) {
     text = text.replace(/^@\w+\s*/, "").trim();
@@ -721,19 +737,6 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   const cmd = parseCommand(text);
   if (cmd) {
     switch (cmd.command) {
-      case "start":
-        await sendText(env, chatId,
-          "welcome to auxloneo. i'm your edge-native agent, living on the mantle chain.\n\n" +
-          "here is what i can do:\n" +
-          "- smart chat: just start typing. i can see images and docs.\n" +
-          "- custom ai: use /endpoint for your own providers or /model to switch brains.\n" +
-          "- persona: tweak how i act with /persona.\n" +
-          "- mantle wallet: /wallet lets me handle yield strategies on mantle for you.\n" +
-          "- data sharing: /grant lets you share context with others.\n\n" +
-          "check /help for the full list."
-        );
-        return;
-
       case "reset": {
         const { getSession, saveSession, createSession } = await import("../memory");
         const session = await getSession(env.SESSIONS, sessionId);
