@@ -1,5 +1,6 @@
 import type { Env, ToolDefinition, ToolResult } from "../types";
 import { saveMemory, getMemory } from "../memory";
+import { StorageService } from "../storage";
 import { twitter } from "./platforms/twitter";
 import { youtube } from "./platforms/youtube";
 import { getMantleChainToolDefinitions, executeMantleChainTool } from "../skills/mantle-chain";
@@ -179,6 +180,43 @@ export async function getToolDefinitions(env: Env, ctx?: ToolContext): Promise<T
         parameters: { type: "object", properties: {} },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "write_file",
+        description: "Save a report, guide, or structured document for the user. These are stored in a relational database and persist across sessions. Use this for long-form content that needs to be recalled later.",
+        parameters: {
+          type: "object",
+          properties: {
+            filename: { type: "string", description: "Name of the file (e.g. 'project_plan.md', 'user_guide.md')" },
+            content: { type: "string", description: "The Markdown content to save" },
+          },
+          required: ["filename", "content"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "read_file",
+        description: "Recall a previously written document by its filename. Use this to retrieve reports, guides, or notes saved via 'write_file'.",
+        parameters: {
+          type: "object",
+          properties: {
+            filename: { type: "string", description: "The name of the file to read" },
+          },
+          required: ["filename"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_files",
+        description: "List all documents created for the user. Use this to see which files are available to read.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
                           ];
 
   // Load mantle-chain skill tools if available
@@ -218,6 +256,21 @@ export async function executeTool(
         return await toolRemoteExec(env, args.command as string, workspaceId);
       case "current_time":
         return { content: new Date().toISOString() };
+      case "write_file":
+        if (!ctx?.sessionId) return { content: "Owner ID (Session ID) required to save file", error: true };
+        const storage = new StorageService(env);
+        const fileId = await storage.saveFile(ctx.sessionId, args.filename as string, args.content as string);
+        return { content: `File '${args.filename}' saved successfully. (ID: ${fileId})` };
+      case "read_file":
+        if (!ctx?.sessionId) return { content: "Owner ID (Session ID) required to read file", error: true };
+        const readStorage = new StorageService(env);
+        const file = await readStorage.readFile(ctx.sessionId, args.filename as string);
+        return file ? { content: file.content } : { content: `File '${args.filename}' not found.`, error: true };
+      case "list_files":
+        if (!ctx?.sessionId) return { content: "Owner ID (Session ID) required to list files", error: true };
+        const listStorage = new StorageService(env);
+        const files = await listStorage.listFiles(ctx.sessionId);
+        return { content: files.length ? files.map(f => `- ${f.filename} (ID: ${f.id})`).join("\n") : "No files found." };
       case "set_cron":
         return await toolSetCron(env, args.cron as string, args.action as "create" | "delete", args.name as string | undefined);
       case "list_crons":
