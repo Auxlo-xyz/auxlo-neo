@@ -296,16 +296,37 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   addMessage(session, userMessage);
 
   // Load memory context
-  const memoryContext = userId 
-    ? await getMemory(env.MEMORY, sessionId, userId, env) 
-    : await getMemory(env.MEMORY, sessionId);
+  let memoryContext = "";
+  if (userId) {
+    const storage = new StorageService(env);
+    const memories = await storage.getMemories(userId);
+    if (memories.length > 0) {
+      memoryContext = memories.map(m => `${m.key}: ${m.value}`).join("\n");
+    }
+  } else if (sessionId) {
+    const storage = new StorageService(env);
+    const ownerId = sessionId.includes(":") ? sessionId.split(":")[1] : sessionId;
+    const memories = await storage.getMemories(ownerId);
+    if (memories.length > 0) {
+      memoryContext = memories.map(m => `${m.key}: ${m.value}`).join("\n");
+    }
+  }
 
-  // Specifically load Trading Lessons using the RLS-aware helper
+  // Specifically load Trading Lessons using the D1 storage
   let lessonsContext = "";
   if (userId || sessionId) {
-    const lessons = await getTradingLessons(env.MEMORY, userId, sessionId);
+    const storage = new StorageService(env);
+    const ownerId = userId || (sessionId.includes(":") ? sessionId.split(":")[1] : sessionId);
+    const lessons = await storage.getMemories(ownerId, "lesson:");
     if (lessons.length > 0) {
-      lessonsContext = `\n\n---\nRECENT TRADING LESSONS (Internalized Experience):\n${lessons.map(l => `[${l.verdict} ${l.score}/100] ${l.lesson}`).join("\n")}`;
+      lessonsContext = `\n\n---\nRECENT TRADING LESSONS (Internalized Experience):\n${lessons.map(l => {
+        try {
+          const parsed = JSON.parse(l.value);
+          return `[${parsed.verdict} ${parsed.score}/100] ${parsed.lesson}`;
+        } catch {
+          return l.value;
+        }
+      }).join("\n")}`;
     }
   }
 

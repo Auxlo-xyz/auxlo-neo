@@ -154,7 +154,7 @@ export async function getSessionWithRLS(
  * - Only owners or users with write permission can save
  */
 export async function saveSessionWithRLS(
-  kv: KVNamespace,
+  env: Env,
   sessionId: string,
   session: SessionState,
   requesterId: string,
@@ -170,7 +170,7 @@ export async function saveSessionWithRLS(
     return;
   }
   
-  await saveSession(kv, sessionId, session);
+  await saveSession(env.SESSIONS, sessionId, session);
 }
 
 // ---- Usage tracking ----

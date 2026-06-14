@@ -539,10 +539,10 @@ async function toolRemember(
     return { content: "Both key and value are required", error: true };
   }
 
-  await saveMemory(env.MEMORY, sessionId, key, value);
-
-  // Also save to global memory (cross-session) with a different prefix
-  await env.MEMORY.put(`global:${key}`, value, { expirationTtl: 60 * 60 * 24 * 90 }); // 90 days
+  const storage = new StorageService(env);
+  const ownerId = sessionId.includes(":") ? sessionId.split(":")[1] : sessionId;
+  
+  await storage.saveMemory(ownerId, key, value);
 
   return { content: `Remembered: ${key} = ${value}` };
 }
@@ -556,35 +556,20 @@ async function toolRecall(
     return { content: "Query is required", error: true };
   }
 
-  const results: string[] = [];
+  const storage = new StorageService(env);
+  const ownerId = sessionId?.includes(":") ? sessionId.split(":")[1] : sessionId || "default";
+  
+  const memories = await storage.getMemories(ownerId);
+  const filtered = memories.filter(m => 
+    m.key.toLowerCase().includes(query.toLowerCase()) || 
+    m.value.toLowerCase().includes(query.toLowerCase())
+  );
 
-  // Search session-scoped memory
-  if (sessionId) {
-    const sessionMem = await getMemory(env.MEMORY, sessionId);
-    if (sessionMem) {
-      // Simple keyword match
-      const lines = sessionMem.split("\n").filter(line =>
-        line.toLowerCase().includes(query.toLowerCase())
-      );
-      results.push(...lines);
-    }
-  }
-
-  // Search global memory
-  const globalList = await env.MEMORY.list({ prefix: "global:", limit: 50 });
-  for (const key of globalList.keys) {
-    const val = await env.MEMORY.get(key.name);
-    if (val && (val.toLowerCase().includes(query.toLowerCase()) || key.name.toLowerCase().includes(query.toLowerCase()))) {
-      const label = key.name.replace("global:", "");
-      results.push(`${label}: ${val}`);
-    }
-  }
-
-  if (results.length === 0) {
+  if (filtered.length === 0) {
     return { content: `No memories found matching "${query}"` };
   }
 
-  return { content: results.join("\n") };
+  return { content: filtered.map(m => `${m.key}: ${m.value}`).join("\n") };
 }
 async function toolXFetch(fetchType: string, id: string): Promise<ToolResult> {
   let url: string;

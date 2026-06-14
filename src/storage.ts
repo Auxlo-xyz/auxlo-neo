@@ -14,6 +14,65 @@ export class StorageService {
   constructor(private env: Env) {}
 
   /**
+   * Saves a memory fact for a specific owner.
+   * If the key already exists for this owner, it updates the value.
+   */
+  async saveMemory(ownerId: string, key: string, value: string): Promise<string> {
+    const now = Date.now();
+    
+    const existing = await this.env.DB.prepare(
+      "SELECT id FROM memories WHERE owner_id = ? AND key = ? LIMIT 1"
+    )
+    .bind(ownerId, key)
+    .first<{ id: string }>();
+
+    if (existing) {
+      await this.env.DB.prepare(
+        "UPDATE memories SET value = ? WHERE id = ?"
+      )
+      .bind(value, existing.id)
+      .run();
+      return existing.id;
+    }
+
+    const id = crypto.randomUUID();
+    await this.env.DB.prepare(
+      "INSERT INTO memories (id, owner_id, key, value, created_at) VALUES (?, ?, ?, ?, ?)"
+    )
+    .bind(id, ownerId, key, value, now)
+    .run();
+
+    return id;
+  }
+
+  /**
+   * Retrieves memories for a specific owner.
+   * Can filter by key prefix for grouped memories (e.g., 'lesson:').
+   */
+  async getMemories(ownerId: string, keyPrefix: string = ""): Promise<{ key: string; value: string }[]> {
+    const { results } = await this.env.DB.prepare(
+      "SELECT key, value FROM memories WHERE owner_id = ? AND key LIKE ? ORDER BY created_at DESC"
+    )
+    .bind(ownerId, `${keyPrefix}%`)
+    .all();
+
+    return results as { key: string; value: string }[];
+  }
+
+  /**
+   * Deletes a specific memory.
+   */
+  async deleteMemory(ownerId: string, key: string): Promise<boolean> {
+    const result = await this.env.DB.prepare(
+      "DELETE FROM memories WHERE owner_id = ? AND key = ?"
+    )
+    .bind(ownerId, key)
+    .run();
+
+    return result.meta.rows_affected > 0;
+  }
+
+  /**
    * Saves a file for a specific owner. 
    * If a file with the same name exists for this owner, it updates the content.
    */
