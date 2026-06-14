@@ -80,6 +80,37 @@ Three KV namespaces handle all persistence: **SESSIONS** (7-day TTL message hist
 
 The agent executes tools in a loop (up to 8 rounds). Tool categories: **Web** (search, fetch), **Blockchain** (Mantle suite via Muscle), **Execution** (remote_exec), **Messaging** (send_message), and **Utility** (current_time, remember, recall).
 
+### Trading Council
+
+The Trading Council is a three-stage orchestration loop for Mantle DeFi operations, designed to maximize yield while minimizing risk and MEV exposure.
+
+#### 1. Diverse Analysis (The Analysts)
+
+When a trading request is made, the agent spawns three distinct analyst personas to provide a range of perspectives on the same request:
+
+- **Analyst Alpha (Aggressive)**: Focuses on high-yield opportunities and momentum; bold and data-driven.
+- **Analyst Beta (Conservative)**: Focuses on risk mitigation and TVL stability; cautious approach.
+- **Analyst Gamma (Balanced)**: Provides a neutral perspective, balancing yield and safety.
+
+#### 2. Synthesis (The Strategist)
+
+The **Lead Strategist** synthesizes the three divergent analyst signals into a single, concrete, and executable **Trading Plan**. This plan specifies the exact tokens, amounts, and routers to be used.
+
+#### 3. Risk Audit (The Guard)
+
+Before any execution, the **Risk Guard** performs a final security audit. The Guard must either **APPROVE** or **REJECT** the plan based on security risks, slippage, and protocol safety. If rejected, the trade is aborted and the user is notified with the reason.
+
+#### Post-Trade Learning (The Judge)
+
+After every Mantle tool execution, a **Trading Judge** compares the proposed Trading Plan with the actual outcome. It produces a `TradeAudit` with:
+
+- **Verdict**: EXCELLENT | SATISFACTORY | POOR | CATASTROPHIC
+- **Score**: 0-100
+- **Reasoning**: Detailed analysis of deviations
+- **Lesson Learned**: A specific instruction to avoid similar mistakes
+
+These lessons are saved to the `MEMORY` KV namespace and injected back into future sessions, allowing the agent to learn from its trading history.
+
 ### Edge vs Traditional
 
 ![Edge vs Traditional](images/edge_vs_traditional.png)
