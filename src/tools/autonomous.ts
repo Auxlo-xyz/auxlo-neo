@@ -292,7 +292,7 @@ async function verifyPolicy(env: Env, userId: string, tradeValueUsd: number, sli
   // In a production environment, this would be a call to the ExecutionGuard.sol contract
   // for now, we simulate the on-chain check using the CONFIG KV as a proxy for the contract state
   const policy = (await env.CONFIG.get(`policy:${userId}`, "json")) as UserPolicy || {
-    maxTradeValueUsd: 500,
+    maxTradeValueUSD: 500,
     maxSlippageBps: 50,
     tradingEnabled: true
   };
@@ -300,8 +300,8 @@ async function verifyPolicy(env: Env, userId: string, tradeValueUsd: number, sli
   if (!policy.tradingEnabled) {
     return { ok: false, reason: "Trading is globally disabled in your Execution Guard policy." };
   }
-  if (tradeValueUsd > policy.maxTradeValueUsd) {
-    return { ok: false, reason: `Trade value $${tradeValueUsd} exceeds your policy limit of $${policy.maxTradeValueUsd}.` };
+  if (tradeValueUsd > policy.maxTradeValueUSD) {
+    return { ok: false, reason: `Trade value $${tradeValueUsd} exceeds your policy limit of $${policy.maxTradeValueUSD}.` };
   }
   if (slippageBps > policy.maxSlippageBps) {
     return { ok: false, reason: `Slippage ${slippageBps}bps exceeds your policy limit of ${policy.maxSlippageBps}bps.` };
@@ -315,13 +315,14 @@ async function toolSetPolicy(env: Env, args: Record<string, unknown>, ctx?: Tool
   if (!userId) return { content: "User identity not found. Cannot set policy.", error: true };
 
   const policy: UserPolicy = {
-    maxTradeValueUsd: args.max_trade_value_usd as number,
+    maxTradeValueUSD: args.max_trade_value_usd as number,
     maxSlippageBps: args.max_slippage_bps as number,
     tradingEnabled: args.trading_enabled as boolean,
+    allowedProtocols: args.allowed_protocols as string[],
   };
 
   await env.CONFIG.put(`policy:${userId}`, JSON.stringify(policy));
-  return { content: `Execution Guard policy updated successfully!\nMax Trade: $${policy.maxTradeValueUsd}\nMax Slippage: ${policy.maxSlippageBps}bps\nEnabled: ${policy.tradingEnabled}` };
+  return { content: `Execution Guard policy updated successfully!\nMax Trade: $${policy.maxTradeValueUSD}\nMax Slippage: ${policy.maxSlippageBps}bps\nEnabled: ${policy.tradingEnabled}` };
 }
 
 /* ================================================================== */

@@ -56,8 +56,7 @@ interface WalletWizardState {
 }
 
 interface GuardWizardState {
-  temp_usd: number;
-  temp_slip: number;
+  step: "limit" | "slippage";
   started_at: number;
 }
 
