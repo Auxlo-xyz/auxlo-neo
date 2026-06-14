@@ -22,7 +22,7 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
   - `send_message` (Progress updates)
   - `current_time` (UTC timestamp)
 
-## 🤖 Mantle Network Autonomous Agent
+## Mantle Network Autonomous Agent
 
 AuxloNeo is now equipped with a fully autonomous on-chain suite for the **Mantle Network**. It doesn't just chat; it operates.
 
