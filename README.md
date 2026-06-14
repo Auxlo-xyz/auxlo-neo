@@ -38,7 +38,7 @@ AuxloNeo is now equipped with a fully autonomous on-chain suite for the **Mantle
 
 ## Architecture
 
-![Agent Architecture](agent_architecture.png)
+![Agent Architecture](images/agent_architecture.png)
 
 ```
 Request → index.ts (router) → Channel handler → agentChat() → Provider loop → Tools → Response
@@ -52,37 +52,37 @@ Request → index.ts (router) → Channel handler → agentChat() → Provider l
 
 ### Agent Loop
 
-![Agent Loop](agent_loop_flow.png)
+![Agent Loop](images/agent_loop_flow.png)
 
 Each request flows through: load session → compact history → build context → call LLM → execute tools (up to 8 rounds) → save session → respond.
 
 ### Context Building
 
-![Context Building](context_building.png)
+![Context Building](images/context_building.png)
 
 The system prompt includes the persona, active skills context, RLS grant info, and learned memories. Session history is auto-compacted. Tool definitions include built-in tools plus any active skill tools.
 
 ### Provider Resolution
 
-![Provider Resolution](provider_flow.png)
+![Provider Resolution](images/provider_flow.png)
 
 Provider/model is resolved in order: request-level → session-level → environment default → hardcoded fallback (`openai`).
 
 ### Memory System
 
-![Memory System](memory_system.png)
+![Memory System](images/memory_system.png)
 
 Three KV namespaces handle all persistence: **SESSIONS** (7-day TTL message history), **MEMORY** (30-day TTL user facts from reflection + explicit `remember`/`recall`), and **CONFIG** (global config, custom providers, per-session persona, skills, RLS grants, and usage tracking).
 
 ### Tool Execution
 
-![Tool Execution](tool_execution.png)
+![Tool Execution](images/tool_execution.png)
 
 The agent executes tools in a loop (up to 8 rounds). Tool categories: **Web** (search, fetch), **Blockchain** (Mantle suite via Muscle), **Execution** (remote_exec), **Messaging** (send_message), and **Utility** (current_time, remember, recall).
 
 ### Edge vs Traditional
 
-![Edge vs Traditional](edge_vs_traditional.png)
+![Edge vs Traditional](images/edge_vs_traditional.png)
 
 Everything is stateless HTTP. No long-lived processes, no WebSocket connections, no filesystem, no databases. Cloudflare KV handles all persistence, and Vercel Fluid Compute handles ephemeral CLI execution.
 
@@ -184,13 +184,13 @@ AuxloNeo implements per-user data isolation with opt-in cross-user sharing via a
 
 ### How RLS Works
 
-![RLS - How It Works](rls_how_it_works.png)
+![RLS - How It Works](images/rls_how_it_works.png)
 
 Every request is checked: if the user is the **owner**, full access is granted. Otherwise, the system checks for an active **access grant**. Grants with expired TTLs are auto-deleted.
 
 ### Permission Levels
 
-![RLS - Permission Levels](rls_permissions.png)
+![RLS - Permission Levels](images/rls_permissions.png)
 
 - **Owner** -- full control (default for all resources you create)
 - **Read** -- can only view data
@@ -199,7 +199,7 @@ Every request is checked: if the user is the **owner**, full access is granted. 
 
 ### Sharing Commands
 
-![RLS - Available Commands](rls_commands_quick.png)
+![RLS - Available Commands](images/rls_commands_quick.png)
 
 **Telegram:**
 - `/grant <userId> <resourceId> [permission] [days]` -- share your data
@@ -208,13 +208,13 @@ Every request is checked: if the user is the **owner**, full access is granted. 
 
 ### Sharing Example
 
-![RLS - Sharing Example](rls_example_usage.png)
+![RLS - Sharing Example](images/rls_example_usage.png)
 
 User A grants temporary read access to User B. After the TTL expires, the grant is auto-deleted and access is revoked.
 
 ### Real-World Example
 
-![RLS - Real-World Example](rls_real_example.png)
+![RLS - Real-World Example](images/rls_real_example.png)
 
 A support scenario: User A needs help, grants temporary access, User B assists, and access auto-expires after the specified duration.
 

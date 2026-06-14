@@ -6,7 +6,7 @@ All diagrams are saved as PNG files in `/home/workspace/AuxloNeo/`
 
 ## 1. How RLS Works
 
-![How It Works](rls_how_it_works.png)
+![How It Works](images/rls_how_it_works.png)
 
 **Simple flow:**
 1. User makes request
@@ -15,7 +15,7 @@ All diagrams are saved as PNG files in `/home/workspace/AuxloNeo/`
 
 ## 2. Example Usage
 
-![Usage Example](rls_example_usage.png)
+![Usage Example](images/rls_example_usage.png)
 
 **Step-by-step:**
 1. User A owns their data
@@ -25,7 +25,7 @@ All diagrams are saved as PNG files in `/home/workspace/AuxloNeo/`
 
 ## 3. Available Commands
 
-![Commands](rls_commands_quick.png)
+![Commands](images/rls_commands_quick.png)
 
 **Telegram & Discord both support:**
 - `/grant` - Share your data
@@ -34,7 +34,7 @@ All diagrams are saved as PNG files in `/home/workspace/AuxloNeo/`
 
 ## 4. Permission Levels
 
-![Permissions](rls_permissions.png)
+![Permissions](images/rls_permissions.png)
 
 **Three levels:**
 - **Owner** - Full control (default)
@@ -43,7 +43,7 @@ All diagrams are saved as PNG files in `/home/workspace/AuxloNeo/`
 
 ## 5. Real-World Example
 
-![Real Example](rls_real_example.png)
+![Real Example](images/rls_real_example.png)
 
 **Scenario:**
 1. User A needs help
@@ -53,7 +53,7 @@ All diagrams are saved as PNG files in `/home/workspace/AuxloNeo/`
 
 ## 6. System Architecture
 
-![Architecture](rls_architecture.png)
+![Architecture](images/rls_architecture.png)
 
 **Three layers:**
 - Users (request access)
