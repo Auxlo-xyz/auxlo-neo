@@ -53,20 +53,16 @@ export async function getToolDefinitions(env: Env, ctx?: ToolContext): Promise<T
           properties: {
             channel: {
               type: "string",
-              enum: ["telegram", "discord"],
+              enum: ["telegram"],
               description: ctx?.channel === "telegram"
                 ? "Use 'telegram' (you are in a Telegram chat)"
-                : ctx?.channel === "discord"
-                  ? "Use 'discord' (you are in a Discord channel)"
-                  : "Channel to send to: 'telegram' or 'discord'",
+                : "Channel to send to: 'telegram'",
             },
             target: {
               type: "string",
               description: ctx?.channel === "telegram"
                 ? `Chat ID (your current session: ${ctx?.sessionId || "unknown"})`
-                : ctx?.channel === "discord"
-                  ? `Channel/user ID (your current session: ${ctx?.sessionId || "unknown"})`
-                  : "Chat ID (Telegram) or channel/user ID (Discord)",
+                : "Chat ID for Telegram",
             },
             message: { type: "string", description: "The message to send" },
           },
@@ -488,27 +484,7 @@ async function toolSendMessage(
     return { content: "Message sent via Telegram" };
   }
 
-  if (channel === "discord") {
-    const token = env.DISCORD_BOT_TOKEN;
-    if (!token) return { content: "DISCORD_BOT_TOKEN not configured", error: true };
-
-    const response = await fetch(`https://discord.com/api/v10/channels/${target}/messages`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bot ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ content: message }),
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      return { content: `Discord send failed: ${err}`, error: true };
-    }
-    return { content: "Message sent via Discord" };
-  }
-
-  return { content: `Unknown channel: ${channel}. Use 'telegram' or 'discord'.`, error: true };
+  return { content: `Unknown channel: ${channel}. Use 'telegram'.`, error: true };
 }
 
 async function toolRemember(

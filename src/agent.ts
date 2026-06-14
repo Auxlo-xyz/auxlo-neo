@@ -188,7 +188,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   const sessionId = req.session_id || "default";
 
   // Resolve identity and channel first (needed for provider resolution and tools)
-  const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : sessionId.startsWith("discord:") ? "discord" : undefined);
+  const channel = req.channel || (sessionId.startsWith("telegram:") ? "telegram" : undefined);
   const userId = req.userId || (sessionId.includes(":") ? sessionId : undefined);
   
   // Initial session load for preference extraction
@@ -326,7 +326,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   while (round < MAX_TOOL_ROUNDS) {
     // Progress nudge: after every PROGRESS_NUDGE_INTERVAL tool calls, prompt for user update
     if (totalToolCallsCount > 0 && totalToolCallsCount % PROGRESS_NUDGE_INTERVAL === 0 && channel) {
-      // Extract target from session ID (telegram:12345 -> 12345, discord:user123 -> user123)
+      // Extract target from session ID (telegram:12345 -> 12345)
       const targetId = sessionId.split(":")[1] || "";
       const nudgeMessage: Message = {
         role: "system",

@@ -12,9 +12,6 @@ export interface Env {
 
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
-  DISCORD_BOT_TOKEN?: string;
-  DISCORD_PUBLIC_KEY?: string;
-  DISCORD_APPLICATION_ID?: string;
 
   DEFAULT_PROVIDER?: string;
   DEFAULT_MODEL?: string;

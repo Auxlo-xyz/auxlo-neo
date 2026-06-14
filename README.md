@@ -13,7 +13,6 @@ AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.
 - **Context Compaction**: Automatic summarization of long conversations to keep tokens low while preserving context.
 - **OpenAI-compatible API** at `/v1/chat/completions` (drop-in replacement for any OpenAI client)
 - **Telegram bot** webhook handler with typing indicators and usage stats
-- **Discord bot** slash commands (`/chat`, `/reset`, `/help`)
 - **Multi-provider LLM support**: OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, DeepSeek
 - **Built-in tools**: 
   - `web_search` (DuckDuckGo)
@@ -39,6 +38,8 @@ AuxloNeo is now equipped with a fully autonomous on-chain suite for the **Mantle
 
 ## Architecture
 
+![Agent Architecture](agent_architecture.png)
+
 ```
 Request → index.ts (router) → Channel handler → agentChat() → Provider loop → Tools → Response
                                          ↕
@@ -48,6 +49,40 @@ Request → index.ts (router) → Channel handler → agentChat() → Provider l
                                          ↕
                                  Remote Executor (Vercel)
 ```
+
+### Agent Loop
+
+![Agent Loop](agent_loop_flow.png)
+
+Each request flows through: load session → compact history → build context → call LLM → execute tools (up to 8 rounds) → save session → respond.
+
+### Context Building
+
+![Context Building](context_building.png)
+
+The system prompt includes the persona, active skills context, RLS grant info, and learned memories. Session history is auto-compacted. Tool definitions include built-in tools plus any active skill tools.
+
+### Provider Resolution
+
+![Provider Resolution](provider_flow.png)
+
+Provider/model is resolved in order: request-level → session-level → environment default → hardcoded fallback (`openai`).
+
+### Memory System
+
+![Memory System](memory_system.png)
+
+Three KV namespaces handle all persistence: **SESSIONS** (7-day TTL message history), **MEMORY** (30-day TTL user facts from reflection + explicit `remember`/`recall`), and **CONFIG** (global config, custom providers, per-session persona, skills, RLS grants, and usage tracking).
+
+### Tool Execution
+
+![Tool Execution](tool_execution.png)
+
+The agent executes tools in a loop (up to 8 rounds). Tool categories: **Web** (search, fetch), **Blockchain** (Mantle suite via Muscle), **Execution** (remote_exec), **Messaging** (send_message), and **Utility** (current_time, remember, recall).
+
+### Edge vs Traditional
+
+![Edge vs Traditional](edge_vs_traditional.png)
 
 Everything is stateless HTTP. No long-lived processes, no WebSocket connections, no filesystem, no databases. Cloudflare KV handles all persistence, and Vercel Fluid Compute handles ephemeral CLI execution.
 
@@ -73,9 +108,6 @@ npm run deploy     # deploy to Cloudflare
 | `DEEPSEEK_API_KEY` | Alternative | DeepSeek API key |
 | `TELEGRAM_BOT_TOKEN` | For Telegram | Telegram bot token from @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | Optional | Webhook verification secret |
-| `DISCORD_BOT_TOKEN` | For Discord | Discord bot token |
-| `DISCORD_PUBLIC_KEY` | For Discord | Discord app public key (Ed25519) |
-| `DISCORD_APPLICATION_ID` | For Discord | Discord app ID |
 | `API_KEY` | Optional | Protects the `/v1/chat/completions` endpoint |
 
 ### KV namespaces (set in wrangler.toml)
@@ -106,10 +138,8 @@ Update `wrangler.toml` with the generated IDs.
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat API |
 | `POST` | `/api/chat/completions` | Alias for above |
 | `POST` | `/telegram` | Telegram webhook handler |
-| `POST` | `/discord` | Discord interaction handler |
 | `POST` | `/admin/configure` | Update config (requires API_KEY) |
 | `POST` | `/admin/setup-telegram` | Register Telegram webhook |
-| `POST` | `/admin/setup-discord` | Register Discord slash commands |
 
 ## Telegram setup
 
@@ -123,25 +153,6 @@ npm run deploy
 
 # 3. Register webhook
 curl -X POST https://your-worker.workers.dev/admin/setup-telegram
-```
-
-## Discord setup
-
-```bash
-# 1. Set secrets
-wrangler secret put DISCORD_BOT_TOKEN
-wrangler secret put DISCORD_PUBLIC_KEY
-wrangler secret put DISCORD_APPLICATION_ID
-
-# 2. Deploy
-npm run deploy
-
-# 3. Register slash commands
-curl -X POST https://your-worker.workers.dev/admin/setup-discord
-
-# 4. Set interaction URL in Discord Developer Portal
-#    → General Information → Interactions Endpoint URL
-#    → https://your-worker.workers.dev/discord
 ```
 
 ## API usage
@@ -167,6 +178,46 @@ curl -X POST https://your-worker.workers.dev/v1/chat/completions \
   }'
 ```
 
+## Row-Level Security (RLS)
+
+AuxloNeo implements per-user data isolation with opt-in cross-user sharing via access grants.
+
+### How RLS Works
+
+![RLS - How It Works](rls_how_it_works.png)
+
+Every request is checked: if the user is the **owner**, full access is granted. Otherwise, the system checks for an active **access grant**. Grants with expired TTLs are auto-deleted.
+
+### Permission Levels
+
+![RLS - Permission Levels](rls_permissions.png)
+
+- **Owner** -- full control (default for all resources you create)
+- **Read** -- can only view data
+- **Write** -- can view and edit
+- **No Access** -- default for all other users
+
+### Sharing Commands
+
+![RLS - Available Commands](rls_commands_quick.png)
+
+**Telegram:**
+- `/grant <userId> <resourceId> [permission] [days]` -- share your data
+- `/revoke <grant_id>` -- remove access
+- `/shares` -- list your active grants
+
+### Sharing Example
+
+![RLS - Sharing Example](rls_example_usage.png)
+
+User A grants temporary read access to User B. After the TTL expires, the grant is auto-deleted and access is revoked.
+
+### Real-World Example
+
+![RLS - Real-World Example](rls_real_example.png)
+
+A support scenario: User A needs help, grants temporary access, User B assists, and access auto-expires after the specified duration.
+
 ## Try it now
 
 Chat with the official AuxloNeo bot on Telegram:
@@ -181,7 +232,6 @@ Chat with the official AuxloNeo bot on Telegram:
 | Filesystem config | KV config |
 | Subprocess tools (agent-browser, webserp) | Pure fetch (web_search, web_fetch) |
 | Telegram long-polling / WebSocket | HTTP webhooks only |
-| Discord gateway | Discord interactions endpoint |
 | MCP server integration | None (future) |
 | Scheduling / cron | Cloudflare Cron Triggers (future) |
 | Voice I/O | None |
@@ -194,7 +244,7 @@ Chat with the official AuxloNeo bot on Telegram:
 - OpenAI-compatible API
 - Tool calling loop with execution
 - Session-based conversation memory
-- Telegram + Discord channel integration
+- Telegram channel integration
 - Streaming responses
 - Web search (DuckDuckGo)
 - Automatic Memory & Context Compaction

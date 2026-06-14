@@ -44,7 +44,7 @@ export async function handleGrantCommand(
 
   // Validate
   if (!recipientId.includes(":")) {
-    return { success: false, message: "Invalid userId format. Use: telegram:123 or discord:456" };
+    return { success: false, message: "Invalid userId format. Use: telegram:123" };
   }
 
   if (!resourceId.includes(":")) {
