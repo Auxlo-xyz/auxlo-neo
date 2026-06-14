@@ -362,20 +362,14 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
 
   if (data.startsWith("grant_res:")) {
     const resourceId = data.split(":")[1];
-    const { getGrantWizardState, setGrantWizardState } = await import("../channels/telegram"); // This is a bit recursive, need to be careful or move helpers
-    const state = await getGrantWizardState(env, userId) || { started_at: Date.now() };
+    const state = await getGrantWizardState(env, userId);
+    if (!state) return;
     state.resourceId = resourceId;
     state.step = "permission";
     await setGrantWizardState(env, userId, state);
-    
     await answerCallback(env, cb.id, "Resource selected");
     if (messageId) {
-      await editText(env, chatId, messageId, `Selected: \`${resourceId}\`\n\nNow choose a permission level:`, {
-        inline_keyboard: [
-          [{ text: "Read", callback_data: "grant_perm:read" }, { text: "Write", callback_data: "grant_perm:write" }, { text: "Admin", callback_data: "grant_perm:admin" }],
-          [{ text: "Cancel", callback_data: "grant_cancel" }]
-        ]
-      });
+      await editText(env, chatId, messageId, `Resource selected: \`${resourceId}\`\n\nWhat level of access should they have?`, grantPermissionKeyboard());
     }
     return;
   }
@@ -396,19 +390,23 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
   }
 
   if (data === "grant_start") {
-    await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
-    
-    // Fetch user's sessions to populate keyboard
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Loading resources...");
+
+    // Discover sessions for this user from KV
     const sessions = await env.SESSIONS.list({ prefix: `session:telegram:${cb.from.id}` });
-    const resourceIds = sessions.keys.map(k => k.name.replace("session:", ""));
-    
+    const resourceIds = sessions.keys.map(k => k.name);
+
     if (resourceIds.length === 0) {
-      await sendText(env, chatId, "No active sessions found to share. Start a conversation first!");
+      await sendText(env, cb.message?.chat.id || 0, "No active sessions found to share.");
       return;
     }
 
-    await answerCallback(env, cb.id, "Selecting resource...");
-    await sendText(env, chatId, "Which session would you like to share?", resourceKeyboard(resourceIds));
+    await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
+    const chatId = cb.message?.chat.id;
+    if (chatId) {
+      await sendText(env, chatId, "Select the session you would like to share:", resourceKeyboard(resourceIds));
+    }
     return;
   }
 
@@ -633,27 +631,6 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     await answerCallback(env, cb.id, "Cancelled");
     if (messageId) {
       await editText(env, chatId, messageId, "Grant configuration cancelled.");
-    }
-    return;
-  }
-
-  if (data === "grant_start") {
-    const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Loading resources...");
-
-    // Discover sessions for this user from KV
-    const sessions = await env.SESSIONS.list({ prefix: `session:telegram:${cb.from.id}` });
-    const resourceIds = sessions.keys.map(k => k.name);
-
-    if (resourceIds.length === 0) {
-      await sendText(env, cb.message?.chat.id || 0, "No active sessions found to share.");
-      return;
-    }
-
-    await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
-    const chatId = cb.message?.chat.id;
-    if (chatId) {
-      await sendText(env, chatId, "Select the session you would like to share:", resourceKeyboard(resourceIds));
     }
     return;
   }
