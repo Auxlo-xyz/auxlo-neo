@@ -170,6 +170,21 @@ export interface SessionGrant {
   ownerAddress: string;
 }
 
+export interface TradingPlan {
+  strategy: string;
+  action: string;
+  expectedOutcome: string;
+  riskAssessment: string;
+  params: Record<string, any>;
+}
+
+export interface TradeAudit {
+  verdict: "EXCELLENT" | "SATISFACTORY" | "POOR" | "CATASTROPHIC";
+  reasoning: string;
+  lessonLearned: string;
+  score: number; // 0-100
+}
+
 export interface ProviderConfig {
   name: string;
   keyEnv: keyof Env;

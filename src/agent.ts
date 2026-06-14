@@ -1,4 +1,4 @@
-import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest } from "./types";
+import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest, TradingPlan, TradeAudit } from "./types";
 import { callProvider } from "./providers";
 import { getToolDefinitions, executeTool } from "./tools";
 import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage, getSessionWithRLS, saveSessionWithRLS } from "./memory";
@@ -11,7 +11,7 @@ const MAX_TOOL_ROUNDS = 8;
 const PROGRESS_NUDGE_INTERVAL = 5; // Nudge every 5 tool calls
 
 // --- Trading Council Orchestration ---
-async function runTradingCouncil(env: Env, req: AgentRequest, session: any, toolCtx: any): Promise<string> {
+async function runTradingCouncil(env: Env, req: AgentRequest, session: any, toolCtx: any): Promise<{ result: string; plan?: TradingPlan }> {
   const preferredProvider = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
   const preferredModel = req.model || session.model || env.DEFAULT_MODEL || "gpt-4o-mini";
 
@@ -57,10 +57,60 @@ async function runTradingCouncil(env: Env, req: AgentRequest, session: any, tool
   });
 
   if (guardRes.content?.toLowerCase().includes("reject")) {
-    return `❌ *Trade Rejected by Guard*\n\nReason: ${guardRes.content}`;
+    return { result: `❌ *Trade Rejected by Guard*\n\nReason: ${guardRes.content}` };
   }
 
-  return `✅ *Trade Approved by Council*\n\nStrategist Plan: ${plan}\n\nGuard Audit: ${guardRes.content}`;
+  // Parse the plan into a structured TradingPlan object for the Judge loop
+  const planParserRes = await callProvider(env, preferredProvider, {
+    messages: [
+      { role: "system", content: "You are a JSON parser. Extract the trading plan into a JSON object with keys: strategy, action, expectedOutcome, riskAssessment, params." },
+      { role: "user", content: plan }
+    ],
+    model: preferredModel,
+  });
+
+  let structuredPlan: TradingPlan | undefined;
+  try {
+    structuredPlan = JSON.parse(planParserRes.content || "{}");
+  } catch {
+    // Fallback to a basic plan if parsing fails
+    structuredPlan = { strategy: "Unknown", action: plan, expectedOutcome: "TBD", riskAssessment: "TBD", params: {} };
+  }
+
+  return { 
+    result: `✅ *Trade Approved by Council*\n\nStrategist Plan: ${plan}\n\nGuard Audit: ${guardRes.content}`,
+    plan: structuredPlan
+  };
+}
+
+async function runTradingAudit(env: Env, req: AgentRequest, session: any, plan: TradingPlan, outcome: string): Promise<TradeAudit> {
+  const preferredProvider = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
+  const preferredModel = req.model || session.model || env.DEFAULT_MODEL || "gpt-4o-mini";
+
+  const auditRes = await callProvider(env, preferredProvider, {
+    messages: [
+      { 
+        role: "system", 
+        content: "You are the Trading Judge. Your job is to perform a post-mortem on a trade. Compare the proposed plan with the actual outcome. Be brutal. If the agent deviated from the plan or the outcome was poor despite the plan, identify the failure mode. Your output must be a JSON object with: verdict ('EXCELLENT'|'SATISFACTORY'|'POOR'|'CATASTROPHIC'), reasoning (detailed analysis), lessonLearned (a specific instruction for the agent to avoid this mistake in the future), and score (0-100)." 
+      },
+      { 
+        role: "user", 
+        content: `Proposed Plan: ${JSON.stringify(plan, null, 2)}\n\nActual Outcome: ${outcome}\n\nRequest: ${req.message}` 
+      }
+    ],
+    model: preferredModel,
+  });
+
+  try {
+    return JSON.parse(auditRes.content || "{}") as TradeAudit;
+  } catch {
+    return {
+      verdict: "SATISFACTORY",
+      reasoning: "Audit failed to parse, assuming satisfactory outcome.",
+      lessonLearned: "Ensure tool outputs are more descriptive for better auditing.",
+      score: 50
+    };
+  }
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a living agent on Cloudflare Workers. You are not a general agent or chatbot.
@@ -201,6 +251,23 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     ? await getMemory(env.MEMORY, sessionId, userId, env) 
     : await getMemory(env.MEMORY, sessionId);
 
+  // Specifically load Trading Lessons
+  let lessonsContext = "";
+  if (userId) {
+    const lessonKeys = await env.MEMORY.list({ prefix: `lesson:${sessionId}:`, limit: 5 });
+    if (lessonKeys.keys.length > 0) {
+      const lessons: string[] = [];
+      for (const key of lessonKeys.keys) {
+        const val = await env.MEMORY.get(key.name);
+        if (val) {
+          const l = JSON.parse(val) as { lesson: string; verdict: string; score: number };
+          lessons.push(`[${l.verdict} ${l.score}/100] ${l.lesson}`);
+        }
+      }
+      lessonsContext = `\n\n---\nRECENT TRADING LESSONS (Internalized Experience):\n${lessons.join("\n")}`;
+    }
+  }
+
   // Load persona: per-session (from /persona command) > env default
   let systemPrompt = env.DEFAULT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
   try {
@@ -209,8 +276,8 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   } catch { /* ignore */ }
 
   const fullSystem = memoryContext
-    ? `${systemPrompt}\n\n---\nThings you remember about this user:\n${memoryContext}`
-    : systemPrompt;
+    ? `${systemPrompt}\n\n---\nThings you remember about this user:\n${memoryContext}${lessonsContext}`
+    : `${systemPrompt}${lessonsContext}`;
 
   // Wallet Context: Check if user has a Mantle wallet
   let walletContext = "";
@@ -238,16 +305,21 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
 
   // ---- Trading Council Mode Interception ----
   if (session.tradingMode && (req.message.toLowerCase().includes("trade") || req.message.toLowerCase().includes("swap") || req.message.toLowerCase().includes("invest"))) {
-    const councilResult = await runTradingCouncil(env, req, session, toolCtx);
+    const { result, plan } = await runTradingCouncil(env, req, session, toolCtx);
+    
+    // Save the structured plan for the post-trade Judge loop
+    if (plan) {
+      await env.SESSIONS.put(`plan:${sessionId}`, JSON.stringify(plan), { expirationTtl: 3600 });
+    }
     
     // Add the council's reasoning to the conversation
-    addMessage(session, { role: "assistant", content: councilResult });
+    addMessage(session, { role: "assistant", content: result });
     
     // Return the result immediately to the user
     session.updatedAt = Date.now();
     await saveSession(env.SESSIONS, sessionId, session);
     return {
-      content: councilResult,
+      content: result,
       model: "trading-council",
       session_id: sessionId,
     };
@@ -308,6 +380,33 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
         }
 
         const toolResult = await executeTool(env, toolName, toolArgs, toolCtx);
+
+        // ---- Post-Trade Judge Loop ----
+        if (toolName.startsWith("mantle_")) {
+          const pendingPlanRaw = await env.SESSIONS.get(`plan:${sessionId}`);
+          if (pendingPlanRaw) {
+            try {
+              const plan = JSON.parse(pendingPlanRaw) as TradingPlan;
+              const audit = await runTradingAudit(env, req, session, plan, toolResult.content);
+              
+              // Save the lesson to cross-session memory
+              await env.MEMORY.put(`lesson:${sessionId}:${Date.now()}`, JSON.stringify({
+                verdict: audit.verdict,
+                lesson: audit.lessonLearned,
+                score: audit.score,
+                timestamp: Date.now()
+              }), { expirationTtl: 60 * 60 * 24 * 30 });
+
+              // Clear the plan so we don't audit the same trade multiple times
+              await env.SESSIONS.delete(`plan:${sessionId}`);
+              
+              console.log(`[JUDGE] Trade Audit Complete: ${audit.verdict} (${audit.score}/100). Lesson: ${audit.lessonLearned}`);
+            } catch (e) {
+              console.error(`[JUDGE] Audit Error: ${e}`);
+            }
+          }
+        }
+
         return {
           id: tc.id,
           content: toolResult.content,
