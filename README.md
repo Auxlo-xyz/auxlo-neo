@@ -2,7 +2,7 @@
 
 **The edge-native AI agent.** Runs on Cloudflare Workers -- zero servers, global low-latency, free tier eligible.
 
-AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.com/Auxlo-xyz/auxloclaw). Where auxloclaw is a full daemon (35k lines, SQLite, subprocesses, WebSocket connections), AuxloNeo is ~500 lines of TypeScript that gives you a multi-provider AI agent with tool calling, session memory, and channel integrations -- all on Cloudflare's free tier.
+AuxloNeo is the stripped-down, edge-first version of [auxloclaw](https://github.com/Auxlo-xyz/auxloclaw). Where auxloclaw is a full daemon (35k lines, SQLite, subprocesses, WebSocket connections), AuxloNeo is ~6,000 lines of TypeScript that gives you a multi-provider AI agent with tool calling, session memory, and channel integrations -- all on Cloudflare's free tier.
 
 ## What you get
 
@@ -176,7 +176,7 @@ Chat with the official AuxloNeo bot on Telegram:
 
 | auxloclaw | AuxloNeo |
 |-----------|----------|
-| 35k lines Rust | ~500 lines TypeScript |
+| 35k lines Rust | ~6,000 lines TypeScript |
 | SQLite memory | KV memory |
 | Filesystem config | KV config |
 | Subprocess tools (agent-browser, webserp) | Pure fetch (web_search, web_fetch) |
