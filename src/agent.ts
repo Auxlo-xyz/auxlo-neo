@@ -244,6 +244,20 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     await saveSession(env.SESSIONS, sessionId, session);
   }
 
+  // NEW: Gemini-specific Turn-Order Fix
+  // Gemini requires: User -> Model -> Tool -> Model.
+  // If the last message is a 'tool' response, it's fine.
+  // If the last message is an 'assistant' tool call, it's fine.
+  // But we must NEVER end the history with a 'system' message or 'assistant' content if a tool response is pending.
+  // Most importantly, if we just compacted, we might have accidentally created a sequence Gemini hates.
+  if (providerId.startsWith("google") || providerId === "gemini") {
+    // Ensure history doesn't end with a tool response without a preceding tool call
+    // or end with a system message that breaks the turn order.
+    while (session.messages.length > 0 && session.messages[session.messages.length - 1].role === "system") {
+      session.messages.pop();
+    }
+  }
+
   // Resolve provider/model: request > session > env default > first custom provider > "openai"
   let providerId = req.provider || session.provider || env.DEFAULT_PROVIDER || "";
 
