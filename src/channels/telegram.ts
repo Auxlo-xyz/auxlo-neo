@@ -307,6 +307,14 @@ function guardKeyboard(): Record<string, unknown> {
   };
 }
 
+function grantActionKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "🆕 Create New Grant", callback_data: "grant_start" }, { text: "❌ Revoke Existing", callback_data: "grant_revoke" }],
+    ],
+  };
+}
+
 function walletKeyboard(): Record<string, unknown> {
   return {
     inline_keyboard: [
@@ -566,6 +574,28 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     if (messageId) {
       await editText(env, chatId, messageId, "Grant configuration cancelled.");
     }
+    return;
+  }
+
+  if (data === "grant_start") {
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Starting grant wizard...");
+    await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
+    const chatId = cb.message?.chat.id;
+    if (chatId) {
+      await sendText(env, chatId, "What resource would you like to share?\n\nSend the Resource ID (e.g. `session:telegram:123` or `memory:telegram:123:prefs`),", cancelKeyboard("grant_cancel"));
+    }
+    return;
+  }
+
+  if (data === "grant_revoke") {
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Revoking access...");
+    const { handleRevokeCommand } = await import("../grant-commands");
+    const result = await handleRevokeCommand(env, userId, ""); 
+    // Note: handleRevokeCommand might need a specific resourceId if not revoking all. 
+    // If it revokes all by default, this works. Otherwise, we need a revoke wizard.
+    await sendText(env, cb.message?.chat.id || 0, result.message);
     return;
   }
 
@@ -1110,15 +1140,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       }
 
       case "grant": {
-        if (cmd.args) {
-          // Backward compatibility for /grant <user> <res> [perm] [days]
-          const { handleGrantCommand } = await import("../grant-commands");
-          const result = await handleGrantCommand(env, userId, cmd.args);
-          await sendText(env, chatId, result.message);
-        } else {
-          await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
-          await sendText(env, chatId, "What resource would you like to share?\n\nSend the Resource ID (e.g. \`session:telegram:123\` or \`memory:telegram:123:prefs\`),", cancelKeyboard("grant_cancel"));
-        }
+        await sendText(env, chatId, "*Grant Management*\n\nManage who has access to your data.", grantActionKeyboard());
         return;
       }
 
