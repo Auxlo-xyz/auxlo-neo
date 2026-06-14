@@ -268,8 +268,8 @@ function confirmKeyboard(): Record<string, unknown> {
   };
 }
 
-function cancelKeyboard(): Record<string, unknown> {
-  return { inline_keyboard: [[{ text: "Cancel", callback_data: "endpoint_cancel" }]] };
+function cancelKeyboard(callbackData: string = "endpoint_cancel"): Record<string, unknown> {
+  return { inline_keyboard: [[{ text: "Cancel", callback_data: callbackData }]] };
 }
 
 function guardKeyboard(): Record<string, unknown> {
@@ -416,6 +416,15 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     return;
   }
 
+  if (data === "wallet_import_cancel") {
+    await env.CONFIG.delete(`wallet_import_wizard:${userId}`);
+    await answerCallback(env, cb.id, "Cancelled");
+    if (messageId) {
+      await editText(env, chatId, messageId, "Import cancelled.");
+    }
+    return;
+  }
+
   // ---- Guard Wizard callbacks ----
   if (data === "guard_cancel") {
     await clearGuardWizardState(env, userId);
@@ -523,7 +532,7 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     const userId = `telegram:${cb.from.id.toString()}`;
     await answerCallback(env, cb.id, "Import mode active");
     await env.CONFIG.put(`wallet_import_wizard:${userId}`, "true", { expirationTtl: 600 });
-    await sendText(env, chatId, "Please send your Mantle private key (must start with `0x`).", cancelKeyboard());
+    await sendText(env, chatId, "Please send your Mantle private key (must start with `0x`).", cancelKeyboard("wallet_import_cancel"));
     return;
   }
 
@@ -606,14 +615,14 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         wizard.base_url = url;
         wizard.step = "model";
         await setWizardState(env, userId, wizard);
-        await sendText(env, chatId, `Base URL: \`${url}\`\n\nNow send the model ID.\nExamples:\n- \`gpt-4o\`\n- \`claude-sonnet-4-20250514\`\n- \`my-custom-model\``, cancelKeyboard());
+        await sendText(env, chatId, `Base URL: \`${url}\`\n\nNow send the model ID.\nExamples:\n- \`gpt-4o\`\n- \`claude-sonnet-4-20250514\`\n- \`my-custom-model\``, cancelKeyboard("endpoint_cancel"));
         return;
       }
       case "model": {
         wizard.model = text.trim();
         wizard.step = "api_key";
         await setWizardState(env, userId, wizard);
-        await sendText(env, chatId, `Model: \`${wizard.model}\`\n\nNow send the API key.`, cancelKeyboard());
+        await sendText(env, chatId, `Model: \`${wizard.model}\`\n\nNow send the API key.`, cancelKeyboard("endpoint_cancel"));
         return;
       }
       case "api_key": {
@@ -644,7 +653,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     }
     const key = text.trim();
     if (!key.startsWith("0x")) {
-      await sendText(env, chatId, "Invalid private key format. Must start with 0x.", cancelKeyboard());
+      await sendText(env, chatId, "Invalid private key format. Must start with 0x.", cancelKeyboard("wallet_import_cancel"));
       return;
     }
     const encryptedKey = await encryptKey(key, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
@@ -652,7 +661,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     const { executeTool } = await import("../tools");
     const res = await executeTool(env, "remote_exec", { command: verifyCmd }, { channel: "telegram", sessionId });
     if (res.error || !res.content) {
-      await sendText(env, chatId, "Invalid private key. Import failed.", cancelKeyboard());
+      await sendText(env, chatId, "Invalid private key. Import failed.", cancelKeyboard("wallet_import_cancel"));
       return;
     }
     const address = res.content.trim();
@@ -674,7 +683,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     if (guardWizard.step === "limit") {
       const value = parseFloat(text);
       if (isNaN(value) || value <= 0) {
-        await sendText(env, chatId, "Invalid number. Please send a positive number for the USD limit (e.g. 1000).", cancelKeyboard());
+        await sendText(env, chatId, "Invalid number. Please send a positive number for the USD limit (e.g. 1000).", cancelKeyboard("guard_cancel"));
         return;
       }
       const limits = (await env.CONFIG.get(`limits:${userId}`, "json")) as any || {
@@ -692,7 +701,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     if (guardWizard.step === "slippage") {
       const value = parseFloat(text);
       if (isNaN(value) || value <= 0) {
-        await sendText(env, chatId, "Invalid number. Please send a positive number for slippage (e.g. 0.5).", cancelKeyboard());
+        await sendText(env, chatId, "Invalid number. Please send a positive number for slippage (e.g. 0.5).", cancelKeyboard("guard_cancel"));
         return;
       }
       const limits = (await env.CONFIG.get(`limits:${userId}`, "json")) as any || {
