@@ -60,6 +60,15 @@ interface GuardWizardState {
   started_at: number;
 }
 
+interface GrantWizardState {
+  step: "user_id" | "resource_id" | "permission" | "days" | "confirm";
+  userId?: string;
+  resourceId?: string;
+  permission?: string;
+  days?: string;
+  started_at: number;
+}
+
 // ---- Bot commands for menu ----
 
 const BOT_COMMANDS = [
@@ -211,6 +220,19 @@ async function clearGuardWizardState(env: Env, userId: string): Promise<void> {
   await env.CONFIG.delete(`guard_wizard:${userId}`);
 }
 
+async function getGrantWizardState(env: Env, userId: string): Promise<GrantWizardState | null> {
+  const raw = await env.CONFIG.get(`grant_wizard:${userId}`, "json");
+  return raw as GrantWizardState | null;
+}
+
+async function setGrantWizardState(env: Env, userId: string, state: GrantWizardState): Promise<void> {
+  await env.CONFIG.put(`grant_wizard:${userId}`, JSON.stringify(state), { expirationTtl: 600 });
+}
+
+async function clearGrantWizardState(env: Env, userId: string): Promise<void> {
+  await env.CONFIG.delete(`grant_wizard:${userId}`);
+}
+
 // ---- Keyboard builders ----
 
 function providerKeyboard(providers: { id: string; name: string; model: string; type: string }[]): Record<string, unknown> {
@@ -287,6 +309,24 @@ function walletKeyboard(): Record<string, unknown> {
     inline_keyboard: [
       [{ text: "🆕 Create Wallet", callback_data: "wallet_create" }, { text: "💰 Check Balance", callback_data: "wallet_status" }],
       [{ text: "🔑 Import Wallet", callback_data: "wallet_import" }],
+    ],
+  };
+}
+
+function grantPermissionKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "Read", callback_data: "grant_perm:read" }, { text: "Write", callback_data: "grant_perm:write" }],
+      [{ text: "Admin", callback_data: "grant_perm:admin" }],
+      [{ text: "Cancel", callback_data: "grant_cancel" }],
+    ],
+  };
+}
+
+function grantConfirmKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "✅ Confirm Grant", callback_data: "grant_confirm" }, { text: "❌ Cancel", callback_data: "grant_cancel" }],
     ],
   };
 }
@@ -468,6 +508,48 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     await answerCallback(env, cb.id, "Enter Slippage");
     if (messageId) {
       await editText(env, chatId, messageId, "Please send the *Max Slippage Percentage* (e.g. 0.5 for 0.5%).", cancelKeyboard());
+    }
+    return;
+  }
+
+  if (data.startsWith("grant_perm:")) {
+    const perm = data.split(":")[1];
+    const userId = `telegram:${cb.from.id.toString()}`;
+    const state = await getGrantWizardState(env, userId);
+    if (state) {
+      state.permission = perm;
+      state.step = "days";
+      await setGrantWizardState(env, userId, state);
+      await answerCallback(env, cb.id, `Permission set to ${perm}`);
+      if (messageId) {
+        await editText(env, chatId, messageId, `Permission: \`${perm}\`\n\nNow send the expiry in days (e.g. 7) or send \`/cancel\` to skip and use default (30 days).`, cancelKeyboard("grant_cancel"));
+      }
+    }
+    return;
+  }
+
+  if (data === "grant_confirm") {
+    const userId = `telegram:${cb.from.id.toString()}`;
+    const state = await getGrantWizardState(env, userId);
+    if (state) {
+      const { handleGrantCommand } = await import("../grant-commands");
+      const args = `${state.userId} ${state.resourceId} ${state.permission || "read"} ${state.days || "30"}`;
+      const result = await handleGrantCommand(env, userId, args);
+      await clearGrantWizardState(env, userId);
+      await answerCallback(env, cb.id, "Grant processed");
+      if (messageId) {
+        await editText(env, chatId, messageId, result.message);
+      }
+    }
+    return;
+  }
+
+  if (data === "grant_cancel") {
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await clearGrantWizardState(env, userId);
+    await answerCallback(env, cb.id, "Cancelled");
+    if (messageId) {
+      await editText(env, chatId, messageId, "Grant configuration cancelled.");
     }
     return;
   }
@@ -733,6 +815,54 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     }
   }
 
+  // ---- Check if user is in grant wizard ----
+  const grantWizard = await getGrantWizardState(env, userId);
+  if (grantWizard) {
+    if (text === "/cancel" || text === "/grant") {
+      await clearGrantWizardState(env, userId);
+      await sendText(env, chatId, "Grant configuration cancelled.");
+      return;
+    }
+
+    switch (grantWizard.step) {
+      case "user_id": {
+        grantWizard.userId = text.trim();
+        grantWizard.step = "resource_id";
+        await setGrantWizardState(env, userId, grantWizard);
+        await sendText(env, chatId, `Target User: \`${grantWizard.userId}\`\n\nNow send the resource ID you want to share\n(e.g. \`session:telegram:123\` or \`memory:telegram:123:prefs\`),`, cancelKeyboard("grant_cancel"));
+        return;
+      }
+      case "resource_id": {
+        grantWizard.resourceId = text.trim();
+        grantWizard.step = "permission";
+        await setGrantWizardState(env, userId, grantWizard);
+        await sendText(env, chatId, `Resource: \`${grantWizard.resourceId}\`\n\nChoose the permission level:`, grantPermissionKeyboard());
+        return;
+      }
+      case "days": {
+        const days = text.trim();
+        if (days !== "/cancel") {
+          if (!/^\d+$/.test(days)) {
+            await sendText(env, chatId, "Invalid number of days. Please send a positive integer or /cancel to use default.", cancelKeyboard("grant_cancel"));
+            return;
+          }
+          grantWizard.days = days;
+        }
+        grantWizard.step = "confirm";
+        await setGrantWizardState(env, userId, grantWizard);
+        await sendText(env, chatId, 
+          `Confirm Grant:\n\n` +
+          `User: \`${grantWizard.userId}\`\n` +
+          `Resource: \`${grantWizard.resourceId}\`\n` +
+          `Perm: \`${grantWizard.permission || "read"}\`\n` +
+          `Expiry: ${grantWizard.days || "30"} days`, 
+          grantConfirmKeyboard());
+        return;
+      }
+    }
+    return;
+  }
+
   // ---- Parse and handle commands ----
   const cmd = parseCommand(text);
   if (cmd) {
@@ -951,9 +1081,15 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       }
 
       case "grant": {
-        const { handleGrantCommand } = await import("../grant-commands");
-        const result = await handleGrantCommand(env, userId, cmd.args || "");
-        await sendText(env, chatId, result.message);
+        if (cmd.args) {
+          // Backward compatibility for /grant <user> <res> [perm] [days]
+          const { handleGrantCommand } = await import("../grant-commands");
+          const result = await handleGrantCommand(env, userId, cmd.args);
+          await sendText(env, chatId, result.message);
+        } else {
+          await setGrantWizardState(env, userId, { step: "user_id", started_at: Date.now() });
+          await sendText(env, chatId, "Who do you want to share data with?\n\nSend the User ID (e.g. \`telegram:456\`),", cancelKeyboard("grant_cancel"));
+        }
         return;
       }
 
