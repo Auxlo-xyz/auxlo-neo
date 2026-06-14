@@ -175,6 +175,13 @@ export interface TradingPlan {
   params: Record<string, any>;
 }
 
+export interface UserPolicy {
+  maxTradeValueUSD: number;
+  maxSlippageBps: number;
+  tradingEnabled: boolean;
+  allowedProtocols: string[];
+}
+
 export interface TradeAudit {
   verdict: "EXCELLENT" | "SATISFACTORY" | "POOR" | "CATASTROPHIC";
   reasoning: string;

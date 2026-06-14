@@ -1,4 +1,4 @@
-import type { Env, ToolDefinition, ToolResult, ToolContext, RiskLimits, SessionGrant, UserWalletConfig } from "../types";
+import type { Env, ToolDefinition, ToolResult, ToolContext, RiskLimits, SessionGrant, UserWalletConfig, UserPolicy } from "../types";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -229,6 +229,22 @@ export function getAutonomousToolDefinitions(): ToolDefinition[] {
         parameters: { type: "object", properties: {} },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "mantle_set_policy",
+        description: "Update your on-chain risk policy for the Execution Guard. Sets limits on max trade value, slippage, and active status.",
+        parameters: {
+          type: "object",
+          properties: {
+            max_trade_value_usd: { type: "number", description: "Maximum allowed trade value in USD" },
+            max_slippage_bps: { type: "number", description: "Maximum allowed slippage in basis points (1 bps = 0.01%)" },
+            trading_enabled: { type: "boolean", description: "Globally enable or disable trading" },
+          },
+          required: ["max_trade_value_usd", "max_slippage_bps", "trading_enabled"],
+        },
+      },
+    },
   ];
 }
 
@@ -262,12 +278,50 @@ export async function executeAutonomousTool(
         return await importWallet(env, args, ctx);
       case "mantle_wallet_status":
         return await walletStatus(env, args, ctx);
+      case "mantle_set_policy":
+        return await toolSetPolicy(env, args, ctx);
       default:
         return { content: `Unknown autonomous tool: ${name}`, error: true };
     }
   } catch (err: any) {
     return { content: `Tool error: ${err.message}`, error: true };
   }
+}
+
+async function verifyPolicy(env: Env, userId: string, tradeValueUsd: number, slippageBps: number): Promise<{ ok: boolean; reason?: string }> {
+  // In a production environment, this would be a call to the ExecutionGuard.sol contract
+  // for now, we simulate the on-chain check using the CONFIG KV as a proxy for the contract state
+  const policy = (await env.CONFIG.get(`policy:${userId}`, "json")) as UserPolicy || {
+    maxTradeValueUsd: 500,
+    maxSlippageBps: 50,
+    tradingEnabled: true
+  };
+
+  if (!policy.tradingEnabled) {
+    return { ok: false, reason: "Trading is globally disabled in your Execution Guard policy." };
+  }
+  if (tradeValueUsd > policy.maxTradeValueUsd) {
+    return { ok: false, reason: `Trade value $${tradeValueUsd} exceeds your policy limit of $${policy.maxTradeValueUsd}.` };
+  }
+  if (slippageBps > policy.maxSlippageBps) {
+    return { ok: false, reason: `Slippage ${slippageBps}bps exceeds your policy limit of ${policy.maxSlippageBps}bps.` };
+  }
+
+  return { ok: true };
+}
+
+async function toolSetPolicy(env: Env, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult> {
+  const userId = ctx?.userId;
+  if (!userId) return { content: "User identity not found. Cannot set policy.", error: true };
+
+  const policy: UserPolicy = {
+    maxTradeValueUsd: args.max_trade_value_usd as number,
+    maxSlippageBps: args.max_slippage_bps as number,
+    tradingEnabled: args.trading_enabled as boolean,
+  };
+
+  await env.CONFIG.put(`policy:${userId}`, JSON.stringify(policy));
+  return { content: `Execution Guard policy updated successfully!\nMax Trade: $${policy.maxTradeValueUsd}\nMax Slippage: ${policy.maxSlippageBps}bps\nEnabled: ${policy.tradingEnabled}` };
 }
 
 /* ================================================================== */
@@ -390,6 +444,12 @@ async function executeYieldStrategy(env: Env, args: Record<string, unknown>, ctx
     allowed_protocols: ["merchant-moe", "agni-finance"]
   };
   
+  // EXECUTION GUARD: On-chain policy check
+  const policyCheck = await verifyPolicy(env, userId, maxAmountUsd, limits.max_slippage_pct * 100);
+  if (!policyCheck.ok) {
+    return { content: `❌ EXECUTION GUARD REJECTED: ${policyCheck.reason}`, error: true };
+  }
+
   if (maxAmountUsd > limits.max_trade_value_usd) {
     return { content: `Trade value ${maxAmountUsd} USD exceeds user limit of ${limits.max_trade_value_usd} USD.`, error: true };
   }
@@ -578,6 +638,15 @@ async function autoRebalance(env: Env, args: Record<string, unknown>, ctx?: Tool
 
   const targetAlloc = (args.target_allocation as Record<string, number>) || {};
   const network = (args.network as "mainnet" | "testnet") || ctx?.network || "mainnet";
+
+  // EXECUTION GUARD: Policy check for rebalance
+  // For rebalance, we check if trading is enabled and if the total wallet balance is within limits
+  const balanceMnt = await mantleRpc(network, "eth_getBalance", [address, "latest"], env);
+  const balanceUsd = Number(BigInt(balanceMnt || "0x0")) / 1e18 * 1.5; // Rough MNT to USD conversion
+  const policyCheck = await verifyPolicy(env, userId, balanceUsd, 50); // Assume 50bps for rebalance
+  if (!policyCheck.ok) {
+    return { content: `❌ EXECUTION GUARD REJECTED: ${policyCheck.reason}`, error: true };
+  }
 
   if (Object.keys(targetAlloc).length === 0) {
     return { content: "target_allocation must not be empty", error: true };
