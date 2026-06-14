@@ -282,6 +282,15 @@ function guardKeyboard(): Record<string, unknown> {
   };
 }
 
+function walletKeyboard(): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      [{ text: "🆕 Create Wallet", callback_data: "wallet_create" }, { text: "💰 Check Balance", callback_data: "wallet_status" }],
+      [{ text: "🔑 Import Wallet", callback_data: "wallet_import" }],
+    ],
+  };
+}
+
 // ---- Callback query handler ----
 
 async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: ExecutionContext): Promise<void> {
@@ -454,6 +463,70 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     return;
   }
 
+  if (data === "wallet_create") {
+    const sessionId = `telegram:${chatId}`;
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Generating wallet...");
+    
+    const { executeTool } = await import("../tools");
+    const res = await executeTool(env, "mantle_wallet_create", {}, { channel: "telegram", sessionId });
+    
+    if (res.error || !res.content) {
+      await sendText(env, chatId, `Failed to generate wallet. Error: ${res.content || "No output from executor"}`);
+      return;
+    }
+    
+    const content = res.content;
+    const lines = content.split('\n').filter(l => l.trim());
+    const address = lines.find(l => l.toLowerCase().includes('address:'))?.split(/: {1,}/)[1]?.trim() || "unknown";
+    const privKey = lines.find(l => l.toLowerCase().includes('private key:'))?.split(/: {1,}/)[1]?.trim() || "unknown";
+    
+    const encryptedKey = await encryptKey(privKey, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
+    await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
+    
+    const details = `*New Mantle Wallet Generated*\n\n` +
+                     `Address: \`${address}\`\n` +
+                     `Private Key: \`${privKey}\`\n\n` +
+                     `⚠️ *CRITICAL*: Save this key immediately. I will delete this message once you confirm.`;
+    
+    const formatted = markdownToTelegram(details);
+    const msg = await tgApi(env, "sendMessage", { 
+      chat_id: chatId, 
+      text: formatted, 
+      parse_mode: "MarkdownV2",
+      reply_markup: {
+        inline_keyboard: [[{ text: "✅ I've saved it", callback_data: "wallet_confirm_save" }]]
+      }
+    });
+    
+    await env.CONFIG.put(`wallet_msg:${userId}`, (msg as any).result.message_id.toString());
+    return;
+  }
+
+  if (data === "wallet_status") {
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Checking balance...");
+    const walletData = await env.CONFIG.get(`wallet:${userId}`, "json");
+    if (!walletData) {
+      await sendText(env, chatId, "No wallet found. Use the 'Create' or 'Import' buttons above.");
+      return;
+    }
+    const { address } = walletData as any;
+    const { mantleRpc } = await import("../tools/autonomous");
+    const balHex = await mantleRpc("mainnet", "eth_getBalance", [address, "latest"], env);
+    const mnt = Number(BigInt(balHex || "0x0")) / 1e18;
+    await sendText(env, chatId, `*Wallet Status*\n\nAddress: \`${address}\`\nBalance: ${mnt.toFixed(4)} MNT`);
+    return;
+  }
+
+  if (data === "wallet_import") {
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Import mode active");
+    await env.CONFIG.put(`wallet_import_wizard:${userId}`, "true", { expirationTtl: 600 });
+    await sendText(env, chatId, "Please send your Mantle private key (must start with `0x`).", cancelKeyboard());
+    return;
+  }
+
   // ---- Delete endpoint ----
   if (data.startsWith("del_endpoint:")) {
     const endpointId = data.split(":")[1];
@@ -558,6 +631,34 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         return;
       }
     }
+    return;
+  }
+
+  // ---- Check if user is importing wallet ----
+  const isImporting = await env.CONFIG.get(`wallet_import_wizard:${userId}`);
+  if (isImporting) {
+    if (text === "/cancel" || text === "/wallet") {
+      await env.CONFIG.delete(`wallet_import_wizard:${userId}`);
+      await sendText(env, chatId, "Import cancelled.");
+      return;
+    }
+    const key = text.trim();
+    if (!key.startsWith("0x")) {
+      await sendText(env, chatId, "Invalid private key format. Must start with 0x.", cancelKeyboard());
+      return;
+    }
+    const encryptedKey = await encryptKey(key, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
+    const verifyCmd = `node -e "const { ethers } = require('ethers'); console.log(new ethers.Wallet('${key}').address)"`;
+    const { executeTool } = await import("../tools");
+    const res = await executeTool(env, "remote_exec", { command: verifyCmd }, { channel: "telegram", sessionId });
+    if (res.error || !res.content) {
+      await sendText(env, chatId, "Invalid private key. Import failed.", cancelKeyboard());
+      return;
+    }
+    const address = res.content.trim();
+    await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
+    await env.CONFIG.delete(`wallet_import_wizard:${userId}`);
+    await sendText(env, chatId, `Wallet imported successfully!\n\nAddress: \`${address}\``);
     return;
   }
 
@@ -795,59 +896,23 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       case "wallet": {
         const args = cmd.args.toLowerCase();
         if (args === "create") {
-          await sendChatAction(env, chatId, "typing");
-          const { executeTool } = await import("../tools");
-          const res = await executeTool(env, "mantle_wallet_create", {}, { channel: "telegram", sessionId });
-          
-          if (res.error || !res.content) {
-            await sendText(env, chatId, `Failed to generate wallet. Error: ${res.content || "No output from executor"}`);
-            return;
-          }
-          
-          const content = res.content;
-          const lines = content.split('\n').filter(l => l.trim());
-          const address = lines.find(l => l.toLowerCase().includes('address:'))?.split(/: {1,}/)[1]?.trim() || "unknown";
-          const privKey = lines.find(l => l.toLowerCase().includes('private key:'))?.split(/: {1,}/)[1]?.trim() || "unknown";
-          
-          const encryptedKey = await encryptKey(privKey, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
-          await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
-          
-          const details = `*New Mantle Wallet Generated*\n\n` +
-                           `Address: \`${address}\`\n` +
-                           `Private Key: \`${privKey}\`\n\n` +
-                           `⚠️ *CRITICAL*: Save this key immediately. I will delete this message once you confirm.`;
-          
-          await sendText(env, chatId, details, {
-            inline_keyboard: [[{ text: "✅ I've saved it", callback_data: "wallet_confirm_save" }]]
-          });
-          
-          // To save the message ID for deletion, we need the result of sendText.
-          // Since sendText doesn't return the message ID, we'll use tgApi for the final send
-          // but we'll let sendText handle the escaping first.
-          const formatted = markdownToTelegram(details);
-          const msg = await tgApi(env, "sendMessage", { 
-            chat_id: chatId, 
-            text: formatted, 
-            parse_mode: "MarkdownV2",
-            reply_markup: {
-              inline_keyboard: [[{ text: "✅ I've saved it", callback_data: "wallet_confirm_save" }]]
-            }
-          });
-          
-          await env.CONFIG.put(`wallet_msg:${userId}`, (msg as any).result.message_id.toString());
+          // Logic moved to handleCallbackQuery (wallet_create)
+          // Trigger it here too for backward compatibility
+          await handleCallbackQuery(env, { 
+            data: "wallet_create", 
+            from: msg.from, 
+            message: msg, 
+            id: "cmd_wallet_create" 
+          }, ctx);
           return;
         } else if (args === "status") {
-          const walletData = await env.CONFIG.get(`wallet:${userId}`, "json");
-          if (!walletData) {
-            await sendText(env, chatId, "No wallet found. Use /wallet create to generate one.");
-            return;
-          }
-          const { address } = walletData as any;
-          const { mantleRpc } = await import("../tools/autonomous");
-          const balHex = await mantleRpc("mainnet", "eth_getBalance", [address, "latest"], env);
-          const mnt = Number(BigInt(balHex || "0x0")) / 1e18;
-          
-          await sendText(env, chatId, `*Wallet Status*\n\nAddress: \`${address}\`\nBalance: ${mnt.toFixed(4)} MNT`);
+          // Logic moved to handleCallbackQuery (wallet_status)
+          await handleCallbackQuery(env, { 
+            data: "wallet_status", 
+            from: msg.from, 
+            message: msg, 
+            id: "cmd_wallet_status" 
+          }, ctx);
           return;
         } else if (args.startsWith("import ")) {
           const key = args.slice(7).trim();
@@ -856,23 +921,19 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
             return;
           }
           const encryptedKey = await encryptKey(key, env.WALLET_ENCRYPTION_KEY || "fallback-secret");
-          
-          // Use remoteExec to verify key and get address
           const verifyCmd = `node -e "const { ethers } = require('ethers'); console.log(new ethers.Wallet('${key}').address)"`;
           const { executeTool } = await import("../tools");
           const res = await executeTool(env, "remote_exec", { command: verifyCmd }, { channel: "telegram", sessionId });
-          
           if (res.error || !res.content) {
             await sendText(env, chatId, "Invalid private key. Import failed.");
             return;
           }
-          
           const address = res.content.trim();
           await env.CONFIG.put(`wallet:${userId}`, JSON.stringify({ address, encryptedKey }));
           await sendText(env, chatId, `Wallet imported successfully!\n\nAddress: \`${address}\``);
           return;
         } else {
-          await sendText(env, chatId, "Wallet management:\n/wallet create - Generate new wallet\n/wallet import <key> - Import existing key\n/wallet status - Check balance");
+          await sendText(env, chatId, "*Wallet Management*\n\nManage your Mantle wallet securey.", walletKeyboard());
           return;
         }
       }
