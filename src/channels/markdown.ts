@@ -4,34 +4,7 @@
 const MARKDOWN_V2_SPECIALS = new Set(['_','*','[',']','(',')','~','`','>','#','+','-','=','|','{','}','.','!']);
 
 export function markdownToTelegram(text: string): string {
-  const converted = convertInner(text);
-  return markersAreBalanced(converted) ? converted : escapeMarkdownV2(text);
-}
-
-function markersAreBalanced(text: string): boolean {
-  for (const marker of ['_', '*', '~'] as const) {
-    let count = 0;
-    let i = 0;
-    while (i < text.length) {
-      if (text[i] === '\\' && i + 1 < text.length) { i += 2; continue; }
-      if (text[i] === '`' && text[i+1] === '`' && text[i+2] === '`') {
-        i += 3;
-        while (i + 2 < text.length && !(text[i] === '`' && text[i+1] === '`' && text[i+2] === '`')) i++;
-        if (i + 2 < text.length) i += 3;
-        continue;
-      }
-      if (text[i] === '`') {
-        i++;
-        while (i < text.length && text[i] !== '`') i++;
-        if (i < text.length) i++;
-        continue;
-      }
-      if (text[i] === marker) count++;
-      i++;
-    }
-    if (count % 2 !== 0) return false;
-  }
-  return true;
+  return convertInner(text);
 }
 
 function convertInner(text: string): string {
