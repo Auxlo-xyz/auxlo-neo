@@ -61,8 +61,7 @@ interface GuardWizardState {
 }
 
 interface GrantWizardState {
-  step: "user_id" | "resource_id" | "permission" | "days" | "confirm";
-  userId?: string;
+  step: "resource_id" | "permission" | "days" | "confirm";
   resourceId?: string;
   permission?: string;
   days?: string;
@@ -233,6 +232,10 @@ async function clearGrantWizardState(env: Env, userId: string): Promise<void> {
   await env.CONFIG.delete(`grant_wizard:${userId}`);
 }
 
+function generateGrantToken(): string {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
 // ---- Keyboard builders ----
 
 function providerKeyboard(providers: { id: string; name: string; model: string; type: string }[]): Record<string, unknown> {
@@ -326,7 +329,7 @@ function grantPermissionKeyboard(): Record<string, unknown> {
 function grantConfirmKeyboard(): Record<string, unknown> {
   return {
     inline_keyboard: [
-      [{ text: "✅ Confirm Grant", callback_data: "grant_confirm" }, { text: "❌ Cancel", callback_data: "grant_cancel" }],
+      [{ text: "✅ Generate Invite Link", callback_data: "grant_confirm" }, { text: "❌ Cancel", callback_data: "grant_cancel" }],
     ],
   };
 }
@@ -532,13 +535,25 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     const userId = `telegram:${cb.from.id.toString()}`;
     const state = await getGrantWizardState(env, userId);
     if (state) {
-      const { handleGrantCommand } = await import("../grant-commands");
-      const args = `${state.userId} ${state.resourceId} ${state.permission || "read"} ${state.days || "30"}`;
-      const result = await handleGrantCommand(env, userId, args);
+      const token = generateGrantToken();
+      const pendingGrant = {
+        resourceId: state.resourceId,
+        permission: state.permission || "read",
+        days: state.days || "30",
+        grantorId: userId,
+      };
+      
+      await env.CONFIG.put(`pending_grant:${token}`, JSON.stringify(pendingGrant), { expirationTtl: 86400 }); // 24h
       await clearGrantWizardState(env, userId);
-      await answerCallback(env, cb.id, "Grant processed");
+      
+      // Get bot username to build the link
+      const me = await tgApi(env, "getMe");
+      const botUsername = me?.result?.username || "AuxloNeoBot";
+      const inviteLink = `https://t.me/${botUsername}?start=grant_${token}`;
+      
+      await answerCallback(env, cb.id, "Link generated!");
       if (messageId) {
-        await editText(env, chatId, messageId, result.message);
+        await editText(env, chatId, messageId, `✅ *Grant Link Generated*\n\nSend this link to the user you want to share with. Once they click it and start the bot, they will receive the access:\n\n\`${inviteLink}\``);
       }
     }
     return;
@@ -661,8 +676,26 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   let text = msg.text || msg.caption || "";
   const sessionId = `telegram:${chatId}`;
 
-  // Handle /start command specifically for the welcome message
-  if (text === "/start") {
+  // Handle /start command specifically for the welcome message and grant links
+  if (text.startsWith("/start")) {
+    const args = text.split(" ")[1];
+    if (args && args.startsWith("grant_")) {
+      const token = args.split("_")[1];
+      const pendingGrantRaw = await env.CONFIG.get(`pending_grant:${token}`, "json");
+      const pendingGrant = pendingGrantRaw as any;
+      
+      if (pendingGrant) {
+        const { handleGrantCommand } = await import("../grant-commands");
+        // Construct args for the existing handleGrantCommand: <userId> <resourceId> <permission> <days>
+        const grantArgs = `${userId} ${pendingGrant.resourceId} ${pendingGrant.permission} ${pendingGrant.days}`;
+        const result = await handleGrantCommand(env, userId, grantArgs);
+        
+        await env.CONFIG.delete(`pending_grant:${token}`);
+        await sendText(env, chatId, `🎁 *Access Granted!*\\n\\n${result.message}`);
+        return;
+      }
+    }
+
     const welcomeMsg = "welcome to auxloneo. i'm your edge-native agent, living on the mantle chain.\n\n" +
       "here is what i can do:\n\n" +
       "- *smart chat*: just start typing. i can see images and docs.\n\n" +
@@ -825,18 +858,15 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
     }
 
     switch (grantWizard.step) {
-      case "user_id": {
-        grantWizard.userId = text.trim();
-        grantWizard.step = "resource_id";
-        await setGrantWizardState(env, userId, grantWizard);
-        await sendText(env, chatId, `Target User: \`${grantWizard.userId}\`\n\nNow send the resource ID you want to share\n(e.g. \`session:telegram:123\` or \`memory:telegram:123:prefs\`),`, cancelKeyboard("grant_cancel"));
-        return;
-      }
       case "resource_id": {
         grantWizard.resourceId = text.trim();
         grantWizard.step = "permission";
         await setGrantWizardState(env, userId, grantWizard);
         await sendText(env, chatId, `Resource: \`${grantWizard.resourceId}\`\n\nChoose the permission level:`, grantPermissionKeyboard());
+        return;
+      }
+      case "permission": {
+        // This step is handled by buttons in handleCallbackQuery
         return;
       }
       case "days": {
@@ -851,8 +881,7 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         grantWizard.step = "confirm";
         await setGrantWizardState(env, userId, grantWizard);
         await sendText(env, chatId, 
-          `Confirm Grant:\n\n` +
-          `User: \`${grantWizard.userId}\`\n` +
+          `Confirm Grant Invite:\n\n` +
           `Resource: \`${grantWizard.resourceId}\`\n` +
           `Perm: \`${grantWizard.permission || "read"}\`\n` +
           `Expiry: ${grantWizard.days || "30"} days`, 
@@ -1087,8 +1116,8 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           const result = await handleGrantCommand(env, userId, cmd.args);
           await sendText(env, chatId, result.message);
         } else {
-          await setGrantWizardState(env, userId, { step: "user_id", started_at: Date.now() });
-          await sendText(env, chatId, "Who do you want to share data with?\n\nSend the User ID (e.g. \`telegram:456\`),", cancelKeyboard("grant_cancel"));
+          await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
+          await sendText(env, chatId, "What resource would you like to share?\n\nSend the Resource ID (e.g. \`session:telegram:123\` or \`memory:telegram:123:prefs\`),", cancelKeyboard("grant_cancel"));
         }
         return;
       }
