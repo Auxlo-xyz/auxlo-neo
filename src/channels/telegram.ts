@@ -639,11 +639,66 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
 
   if (data === "grant_start") {
     const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Starting grant wizard...");
+    await answerCallback(env, cb.id, "Loading resources...");
+
+    // Discover sessions for this user from KV
+    const sessions = await env.SESSIONS.list({ prefix: `session:telegram:${cb.from.id}` });
+    const resourceIds = sessions.keys.map(k => k.name);
+
+    if (resourceIds.length === 0) {
+      await sendText(env, cb.message?.chat.id || 0, "No active sessions found to share.");
+      return;
+    }
+
     await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
     const chatId = cb.message?.chat.id;
     if (chatId) {
-      await sendText(env, chatId, "What resource would you like to share?\n\nSend the Resource ID (e.g. `session:telegram:123` or `memory:telegram:123:prefs`),", cancelKeyboard("grant_cancel"));
+      await sendText(env, chatId, "Select the session you would like to share:", resourceKeyboard(resourceIds));
+    }
+    return;
+  }
+
+  if (data.startsWith("grant_res:")) {
+    const resourceId = data.split(":")[1];
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Resource selected");
+
+    await setGrantWizardState(env, userId, {
+      step: "permission",
+      resourceId,
+      started_at: Date.now(),
+    });
+
+    const chatId = cb.message?.chat.id;
+    if (chatId) {
+      await sendText(env, chatId, `Selected: \`${resourceId}\`\n\nNow choose the permission level:`, {
+        inline_keyboard: [
+          [{ text: "📖 Read", callback_data: "grant_perm:read" }, { text: "✍️ Write", callback_data: "grant_perm:write" }],
+          [{ text: "🔑 Admin", callback_data: "grant_perm:admin" }],
+          [{ text: "Cancel", callback_data: "grant_cancel" }],
+        ]
+      });
+    }
+    return;
+  }
+
+  if (data.startsWith("grant_perm:")) {
+    const permission = data.split(":")[1];
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Permission set");
+
+    const state = await getGrantWizardState(env, userId);
+    if (!state) return;
+
+    await setGrantWizardState(env, userId, {
+      ...state,
+      permission,
+      step: "days",
+    });
+
+    const chatId = cb.message?.chat.id;
+    if (chatId) {
+      await sendText(env, chatId, `Permission: ${permission === 'read' ? 'Read' : permission === 'write' ? 'Write' : 'Admin'}\n\nFinally, enter the duration in days (e.g. 7, 30). Leave blank for 30 days default.`, cancelKeyboard("grant_cancel"));
     }
     return;
   }
