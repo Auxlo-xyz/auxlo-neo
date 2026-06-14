@@ -24,6 +24,7 @@ export interface Env {
   
   // Cloudflare API token for cron management
   CLOUDFLARE_API_TOKEN?: string;
+  DB: D1Database;
 
   // Mantle Network RPC endpoints
   MANTLE_RPC_MAINNET?: string;

@@ -18,5 +18,10 @@ id = "ed1a3572eaa04ab08ae601f08e5d6801"
 binding = "CONFIG"
 id = "60a8e92dca8c4dd28a5246a165c4280a"
 
+[[d1_databases]]
+binding = "DB"
+database_name = "auxlo-docs"
+database_id = "def3fb93-73c1-460d-b855-1e1cad6e42b0"
+
 [vars]
 EXECUTOR_URL = "https://auxlo-muscle.vercel.app/exec"
