@@ -141,9 +141,6 @@ You are aware of the following native slash commands and their purposes. When us
 - /usage: View token usage statistics.
 - /wallet: Manage your Mantle wallet (Create, Import, Balance).
 - /trading: Toggle professional Trading Council mode for autonomous yield strategies.
-- /grant: Share your session or memory context with another user via a secure invite link.
-- /revoke: Revoke existing data sharing grants.
-- /shares: List all resources you are currently sharing.
 - /guard: Set risk limits (USD limit, slippage) for autonomous trades.
 
 ## MULTIMODAL CAPABILITIES

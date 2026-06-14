@@ -60,14 +60,6 @@ interface GuardWizardState {
   started_at: number;
 }
 
-interface GrantWizardState {
-  step: "resource_id" | "permission" | "days" | "confirm";
-  resourceId?: string;
-  permission?: string;
-  days?: string;
-  started_at: number;
-}
-
 // ---- Bot commands for menu ----
 
 const BOT_COMMANDS = [
@@ -83,7 +75,6 @@ const BOT_COMMANDS = [
   { command: "usage", description: "Show token usage stats" },
   { command: "wallet", description: "Manage your Mantle wallet" },
   { command: "trading", description: "Toggle professional trading council mode" },
-  { command: "grant", description: "Share or manage data access" },
   { command: "guard", description: "Set risk limits for trades" },
 ];
 
@@ -217,23 +208,6 @@ async function clearGuardWizardState(env: Env, userId: string): Promise<void> {
   await env.CONFIG.delete(`guard_wizard:${userId}`);
 }
 
-async function getGrantWizardState(env: Env, userId: string): Promise<GrantWizardState | null> {
-  const raw = await env.CONFIG.get(`grant_wizard:${userId}`, "json");
-  return raw as GrantWizardState | null;
-}
-
-async function setGrantWizardState(env: Env, userId: string, state: GrantWizardState): Promise<void> {
-  await env.CONFIG.put(`grant_wizard:${userId}`, JSON.stringify(state), { expirationTtl: 600 });
-}
-
-async function clearGrantWizardState(env: Env, userId: string): Promise<void> {
-  await env.CONFIG.delete(`grant_wizard:${userId}`);
-}
-
-function generateGrantToken(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-}
-
 // ---- Keyboard builders ----
 
 function providerKeyboard(providers: { id: string; name: string; model: string; type: string }[]): Record<string, unknown> {
@@ -295,36 +269,12 @@ function cancelKeyboard(callbackData: string = "endpoint_cancel"): Record<string
   return { inline_keyboard: [[{ text: "Cancel", callback_data: callbackData }]] };
 }
 
-function revokeKeyboard(shares: string[]): Record<string, unknown> {
-  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
-  for (let i = 0; i < shares.length; i++) {
-    rows.push([{ text: `Revoke \`${shares[i].split(":").pop() || shares[i]}\``, callback_data: `grant_revoke:${shares[i]}` }]);
-  }
-  return { inline_keyboard: rows };
-}
-
-function resourceKeyboard(resources: string[]): Record<string, unknown> {
-  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
-  for (let i = 0; i < resources.length; i++) {
-    rows.push([{ text: resources[i].split(":").pop() || resources[i], callback_data: `grant_res:${resources[i]}` }]);
-  }
-  return { inline_keyboard: rows };
-}
-
 function guardKeyboard(): Record<string, unknown> {
   return {
     inline_keyboard: [
       [{ text: "Set Max USD Limit", callback_data: "guard_set_limit" }, { text: "Set Slippage %", callback_data: "guard_set_slippage" }],
       [{ text: "View Current Limits", callback_data: "guard_status" }],
       [{ text: "Cancel", callback_data: "guard_cancel" }],
-    ],
-  };
-}
-
-function grantActionKeyboard(): Record<string, unknown> {
-  return {
-    inline_keyboard: [
-      [{ text: "🆕 Create New Grant", callback_data: "grant_start" }, { text: "❌ Revoke Existing", callback_data: "grant_revoke" }],
     ],
   };
 }
@@ -365,53 +315,6 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
   const messageId = cb.message?.message_id;
 
   if (!chatId) return;
-
-  if (data.startsWith("grant_res:")) {
-    const resourceId = data.split(":")[1];
-    const state = await getGrantWizardState(env, userId);
-    if (!state) return;
-    state.resourceId = resourceId;
-    state.step = "permission";
-    await setGrantWizardState(env, userId, state);
-    await answerCallback(env, cb.id, "Resource selected");
-    if (messageId) {
-      await editText(env, chatId, messageId, `Resource selected: \`${resourceId}\`\n\nWhat level of access should they have?`, grantPermissionKeyboard());
-    }
-    return;
-  }
-
-  if (data.startsWith("grant_perm:")) {
-    const permission = data.split(":")[1];
-    const state = await getGrantWizardState(env, userId);
-    if (!state) return;
-    state.permission = permission;
-    state.step = "days";
-    await setGrantWizardState(env, userId, state);
-    
-    await answerCallback(env, cb.id, "Permission selected");
-    if (messageId) {
-      await editText(env, chatId, messageId, `Permission: ${permission.toUpperCase()}\n\nHow many days should this access last? (Optional, default 30). Send a number or /cancel.`, cancelKeyboard("grant_cancel"));
-    }
-    return;
-  }
-
-  if (data === "grant_start") {
-    const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Loading resources...");
-
-    // Discover sessions belonging to the user
-    const sessionsList = await env.SESSIONS.list({ prefix: `session:telegram:${cb.from.id}` });
-    const resources = sessionsList.keys.map(k => k.name.replace("session:", ""));
-
-    if (resources.length === 0) {
-      await sendText(env, chatId, "No active sessions found to share.");
-      return;
-    }
-
-    await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
-    await sendText(env, chatId, "What resource would you like to share?", resourceKeyboard(resources));
-    return;
-  }
 
   // ---- Provider selection ----
   if (data.startsWith("set_provider:")) {
@@ -584,142 +487,6 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
     return;
   }
 
-  if (data.startsWith("grant_perm:")) {
-    const perm = data.split(":")[1];
-    const userId = `telegram:${cb.from.id.toString()}`;
-    const state = await getGrantWizardState(env, userId);
-    if (state) {
-      state.permission = perm;
-      state.step = "days";
-      await setGrantWizardState(env, userId, state);
-      await answerCallback(env, cb.id, `Permission set to ${perm}`);
-      if (messageId) {
-        await editText(env, chatId, messageId, `Permission: \`${perm}\`\n\nNow send the expiry in days (e.g. 7) or send \`/cancel\` to skip and use default (30 days).`, cancelKeyboard("grant_cancel"));
-      }
-    }
-    return;
-  }
-
-  if (data === "grant_confirm") {
-    const userId = `telegram:${cb.from.id.toString()}`;
-    const state = await getGrantWizardState(env, userId);
-    if (state) {
-      const token = generateGrantToken();
-      const pendingGrant = {
-        resourceId: state.resourceId,
-        permission: state.permission || "read",
-        days: state.days || "30",
-        grantorId: userId,
-      };
-      
-      await env.CONFIG.put(`pending_grant:${token}`, JSON.stringify(pendingGrant), { expirationTtl: 86400 }); // 24h
-      await clearGrantWizardState(env, userId);
-      
-      // Get bot username to build the link
-      const me = await tgApi(env, "getMe");
-      const botUsername = me?.result?.username || "AuxloNeoBot";
-      const inviteLink = `https://t.me/${botUsername}?start=grant_${token}`;
-      
-      await answerCallback(env, cb.id, "Link generated!");
-      if (messageId) {
-        await editText(env, chatId, messageId, `✅ *Grant Link Generated*\n\nSend this link to the user you want to share with. Once they click it and start the bot, they will receive the access:\n\n\`${inviteLink}\``);
-      }
-    }
-    return;
-  }
-
-  if (data === "grant_cancel") {
-    const userId = `telegram:${cb.from.id.toString()}`;
-    await clearGrantWizardState(env, userId);
-    await answerCallback(env, cb.id, "Cancelled");
-    if (messageId) {
-      await editText(env, chatId, messageId, "Grant configuration cancelled.");
-    }
-    return;
-  }
-
-  if (data.startsWith("grant_res:")) {
-    const resourceId = data.split(":")[1];
-    const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Resource selected");
-
-    await setGrantWizardState(env, userId, {
-      step: "permission",
-      resourceId: `session:${resourceId}`,
-      started_at: Date.now(),
-    });
-
-    const chatId = cb.message?.chat.id;
-    if (chatId) {
-      await sendText(env, chatId, `Selected: \`${resourceId}\`\n\nNow choose the permission level:`, {
-        inline_keyboard: [
-          [{ text: "📖 Read", callback_data: "grant_perm:read" }, { text: "✍️ Write", callback_data: "grant_perm:write" }],
-          [{ text: "🔑 Admin", callback_data: "grant_perm:admin" }],
-          [{ text: "Cancel", callback_data: "grant_cancel" }],
-        ]
-      });
-    }
-    return;
-  }
-
-  if (data.startsWith("grant_perm:")) {
-    const permission = data.split(":")[1];
-    const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Permission set");
-
-    const state = await getGrantWizardState(env, userId);
-    if (!state) return;
-
-    await setGrantWizardState(env, userId, {
-      ...state,
-      permission,
-      step: "days",
-    });
-
-    const chatId = cb.message?.chat.id;
-    if (chatId) {
-      await sendText(env, chatId, `Permission: ${permission === 'read' ? 'Read' : permission === 'write' ? 'Write' : 'Admin'}\n\nFinally, enter the duration in days (e.g. 7, 30). Leave blank for 30 days default.`, cancelKeyboard("grant_cancel"));
-    }
-    return;
-  }
-
-  if (data === "grant_revoke") {
-    const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Loading shares...");
-
-    const { listGrantsForOwner } = await import("../grant-commands");
-    const ownedGrants = await listGrantsForOwner(env, userId);
-
-    if (!ownedGrants || ownedGrants.length === 0) {
-      await sendText(env, chatId, "You have no active grants to revoke.");
-      return;
-    }
-
-    const rows = ownedGrants.map(g => [{
-      text: `Revoke ${g.resource_id.split(":").pop() || g.resource_id}`,
-      callback_data: `grant_revoke_confirm:${g.grant_id}`
-    }]);
-
-    await sendText(env, chatId, "Select a grant to revoke:", { inline_keyboard: rows });
-    return;
-  }
-
-  if (data.startsWith("grant_revoke_confirm:")) {
-    const grantId = data.split(":")[1];
-    const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Revoking...");
-
-    const { revokeAccessByGrantId } = await import("../grant-commands");
-    const success = await revokeAccessByGrantId(env, grantId);
-
-    if (success) {
-      await sendText(env, chatId, `✅ Access revoked: \`${grantId}\``);
-    } else {
-      await sendText(env, chatId, "Failed to revoke grant. It may have already expired.");
-    }
-    return;
-  }
-
   if (data === "wallet_create") {
     const sessionId = `telegram:${chatId}`;
     const userId = `telegram:${cb.from.id.toString()}`;
@@ -831,20 +598,9 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
   if (text.startsWith("/start")) {
     const args = text.split(" ")[1];
     if (args && args.startsWith("grant_")) {
-      const token = args.split("_")[1];
-      const pendingGrantRaw = await env.CONFIG.get(`pending_grant:${token}`, "json");
-      const pendingGrant = pendingGrantRaw as any;
-      
-      if (pendingGrant) {
-        const { handleGrantCommand } = await import("../grant-commands");
-        // Construct args for the existing handleGrantCommand: <userId> <resourceId> <permission> <days>
-        const grantArgs = `${userId} ${pendingGrant.resourceId} ${pendingGrant.permission} ${pendingGrant.days}`;
-        const result = await handleGrantCommand(env, userId, grantArgs);
-        
-        await env.CONFIG.delete(`pending_grant:${token}`);
-        await sendText(env, chatId, `🎁 *Access Granted!*\\n\\n${result.message}`);
-        return;
-      }
+      // Grant links are no longer supported
+      await sendText(env, chatId, "This invite link is no longer valid. Data sharing has been disabled for security reasons.");
+      return;
     }
 
     const welcomeMsg = "welcome to auxloneo. i'm your edge-native agent, living on the mantle chain.\n\n" +
@@ -854,7 +610,6 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       "- *persona*: tweak how i act with /persona.\n\n" +
       "- *mantle wallet*: /wallet lets me handle yield strategies and balance checks on mantle.\n\n" +
       "- *risk guard*: /guard lets you set safety limits for autonomous trades.\n\n" +
-      "- *data sharing*: /grant lets you share context with others.\n\n" +
       "check /help for the full list.";
     
     await sendText(env, chatId, welcomeMsg);
@@ -997,50 +752,6 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       await sendText(env, chatId, `✅ Max slippage updated to *${value}%*.`, guardKeyboard());
       return;
     }
-  }
-
-  // ---- Check if user is in grant wizard ----
-  const grantWizard = await getGrantWizardState(env, userId);
-  if (grantWizard) {
-    if (text === "/cancel" || text === "/grant") {
-      await clearGrantWizardState(env, userId);
-      await sendText(env, chatId, "Grant configuration cancelled.");
-      return;
-    }
-
-    switch (grantWizard.step) {
-      case "resource_id": {
-        grantWizard.resourceId = text.trim();
-        grantWizard.step = "permission";
-        await setGrantWizardState(env, userId, grantWizard);
-        await sendText(env, chatId, `Resource: \`${grantWizard.resourceId}\`\n\nChoose the permission level:`, grantPermissionKeyboard());
-        return;
-      }
-      case "permission": {
-        // This step is handled by buttons in handleCallbackQuery
-        return;
-      }
-      case "days": {
-        const days = text.trim();
-        if (days !== "/cancel") {
-          if (!/^\d+$/.test(days)) {
-            await sendText(env, chatId, "Invalid number of days. Please send a positive integer or /cancel to use default.", cancelKeyboard("grant_cancel"));
-            return;
-          }
-          grantWizard.days = days;
-        }
-        grantWizard.step = "confirm";
-        await setGrantWizardState(env, userId, grantWizard);
-        await sendText(env, chatId, 
-          `Confirm Grant Invite:\n\n` +
-          `Resource: \`${grantWizard.resourceId}\`\n` +
-          `Perm: \`${grantWizard.permission || "read"}\`\n` +
-          `Expiry: ${grantWizard.days || "30"} days`, 
-          grantConfirmKeyboard());
-        return;
-      }
-    }
-    return;
   }
 
   // ---- Parse and handle commands ----
@@ -1258,23 +969,6 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
           await sendText(env, chatId, "*Wallet Management*\n\nManage your Mantle wallet securey.", walletKeyboard());
           return;
         }
-      }
-
-      case "grant": {
-        if (cmd.args) {
-          // Backward compatibility
-          const { handleGrantCommand } = await import("../grant-commands");
-          const result = await handleGrantCommand(env, userId, cmd.args);
-          await sendText(env, chatId, result.message);
-        } else {
-          // Trigger inline keyboard instead of text prompt
-          await sendText(env, chatId, "What would you like to do with data sharing?", {
-            inline_keyboard: [
-              [{ text: "🆕 Create New Grant", callback_data: "grant_start" }, { text: "❌ Revoke Existing", callback_data: "grant_revoke" }]
-            ]
-          });
-        }
-        return;
       }
 
       case "guard": {
