@@ -73,6 +73,7 @@ const BOT_COMMANDS = [
   { command: "grant", description: "Share data with another user" },
   { command: "revoke", description: "Revoke data sharing" },
   { command: "shares", description: "List shared resources" },
+  { command: "guard", description: "Set risk limits for trades" },
 ];
 
 // ---- Helpers ----
@@ -773,6 +774,49 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
         const { handleListSharesCommand } = await import("../grant-commands");
         const result = await handleListSharesCommand(env, userId);
         await sendText(env, chatId, result.message);
+        return;
+      }
+
+      case "guard": {
+        const { executeTool } = await import("../tools");
+        if (!cmd.args) {
+          await sendText(env, chatId, "🛡️ *Execution Guard*\n\nSet your on-chain risk limits to prevent AI hallucinations from draining your wallet.\n\nUsage:\n/guard status - View current limits\n/guard reset - Reset to defaults\n/guard <usd_limit> <slippage_pct>\n\nExample: \`/guard 500 0.5\` (Set max trade to $500 and slippage to 0.5%)");
+          return;
+        }
+
+        if (cmd.args === "status") {
+          const limits = await env.CONFIG.get(`limits:${userId}`, "json");
+          if (!limits) {
+            await sendText(env, chatId, "No custom limits set. Using system defaults: $500 max trade, 0.5% slippage.");
+            return;
+          }
+          const l = limits as any;
+          await sendText(env, chatId, `🛡️ *Current Risk Limits*\n\nMax Trade: \`${l.max_trade_value_usd} USD\`\nMax Slippage: \`${l.max_slippage_pct}%\`\nAllowed Protocols: \`${l.allowed_protocols?.join(", ") || "Default"}\``);
+          return;
+        }
+
+        if (cmd.args === "reset") {
+          await env.CONFIG.delete(`limits:${userId}`);
+          await sendText(env, chatId, "Risk limits reset to defaults.");
+          return;
+        }
+
+        const parts = cmd.args.split(/\s+/);
+        if (parts.length < 2) {
+          await sendText(env, chatId, "Invalid format. Use: \`/guard <usd_limit> <slippage_pct>\`\nExample: \`/guard 500 0.5\`");
+          return;
+        }
+
+        const usd = parseFloat(parts[0]);
+        const slip = parseFloat(parts[1]);
+
+        if (isNaN(usd) || isNaN(slip)) {
+          await sendText(env, chatId, "Please provide numbers for both limits.");
+          return;
+        }
+
+        const res = await executeTool(env, "mantle_set_policy", { max_trade_value_usd: usd, max_slippage_pct: slip }, { channel: "telegram", sessionId });
+        await sendText(env, chatId, res.content || "Policy updated successfully.");
         return;
       }
 
