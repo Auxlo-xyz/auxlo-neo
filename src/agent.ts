@@ -11,11 +11,11 @@ const MAX_TOOL_ROUNDS = 8;
 const PROGRESS_NUDGE_INTERVAL = 5; // Nudge every 5 tool calls
 
 // --- Trading Council Orchestration ---
-async function runTradingCouncil(env: Env, req: AgentRequest, session: any, toolCtx: any): Promise<{ result: string; plan?: TradingPlan }> {
+async function runTradingCouncil(env: Env, req: AgentRequest, session: any, toolCtx: any, treasurySignal?: string): Promise<{ result: string; plan?: TradingPlan }> {
   const preferredProvider = req.provider || session.provider || env.DEFAULT_PROVIDER || "openai";
   const preferredModel = req.model || session.model || env.DEFAULT_MODEL || "gpt-4o-mini";
 
-  // 1. Analysts (x3) - Diverse perspectives using the user's chosen model
+  // 1. Analysts (x3) - Now they audit a SPECIFIC signal if provided
   const analystPrompts = [
     "Analyst Alpha (Aggressive): Focus on high-yield opportunities and momentum. Be bold but data-driven.",
     "Analyst Beta (Conservative): Focus on risk mitigation and TVL stability. Be cautious.",
@@ -27,7 +27,9 @@ async function runTradingCouncil(env: Env, req: AgentRequest, session: any, tool
       const res = await callProvider(env, preferredProvider, {
         messages: [
           { role: "system", content: `You are a DeFi Analyst. ${p}` },
-          { role: "user", content: `Analyze this request and provide a specific trading signal for Mantle: ${req.message}` }
+          { role: "user", content: treasurySignal 
+            ? `The Treasury Signal Engine recommends: ${treasurySignal}. Audit this signal for Mantle. Is it a sound move?` 
+            : `Analyze this request and provide a specific trading signal for Mantle: ${req.message}` }
         ],
         model: preferredModel,
       });
@@ -40,8 +42,8 @@ async function runTradingCouncil(env: Env, req: AgentRequest, session: any, tool
   // 2. Strategist - Synthesizing signals into a plan
   const strategistRes = await callProvider(env, preferredProvider, {
     messages: [
-      { role: "system", content: "You are the Lead Strategist. Your job is to synthesize multiple analyst signals into one concrete, executable trading plan. Be precise about tokens, amounts, and routers." },
-      { role: "user", content: `Original Request: ${req.message}\n\nAnalyst Signals:\n${analystResults.join("\n")}` }
+      { role: "system", content: "You are the Lead Strategist. Your job is to synthesize analyst audits into one concrete, executable trading plan. Be precise about tokens, amounts, and routers." },
+      { role: "user", content: `Original Request: ${req.message}\n\nTreasury Signal: ${treasurySignal || "None provided"}\n\nAnalyst Audits:\n${analystResults.join("\n")}` }
     ],
     model: preferredModel,
   });
@@ -77,8 +79,10 @@ async function runTradingCouncil(env: Env, req: AgentRequest, session: any, tool
     structuredPlan = { strategy: "Unknown", action: plan, expectedOutcome: "TBD", riskAssessment: "TBD", params: {} };
   }
 
+  const auditTrail = `⚡ *TREASURY SIGNAL*\n${treasurySignal || "No deterministic signal generated."}\n\n🧐 *COUNCIL AUDIT*\n${guardRes.content}\n\n📝 *STRATEGIST PLAN*\n${plan}`;
+
   return { 
-    result: `✅ *Trade Approved by Council*\n\nStrategist Plan: ${plan}\n\nGuard Audit: ${guardRes.content}`,
+    result: auditTrail,
     plan: structuredPlan
   };
 }
@@ -297,7 +301,16 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
 
   // ---- Trading Council Mode Interception ----
   if (session.tradingMode && (req.message.toLowerCase().includes("trade") || req.message.toLowerCase().includes("swap") || req.message.toLowerCase().includes("invest"))) {
-    const { result, plan } = await runTradingCouncil(env, req, session, toolCtx);
+    // 1. Get Deterministic Signal first
+    let treasurySignal = "";
+    try {
+      const signalResult = await executeTool(env, "mantle_get_treasury_signal", { min_apr: 0, max_risk: "medium" }, toolCtx);
+      if (!signalResult.error) treasurySignal = signalResult.content;
+    } catch (e) {
+      console.error("Treasury Signal Engine Error:", e);
+    }
+
+    const { result, plan } = await runTradingCouncil(env, req, session, toolCtx, treasurySignal);
     
     // Save the structured plan for the post-trade Judge loop
     if (plan) {
