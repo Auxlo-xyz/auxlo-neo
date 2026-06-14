@@ -38,6 +38,60 @@ AuxloNeo is now equipped with a fully autonomous on-chain suite for the **Mantle
 
 ## Architecture
 
+### Execution Guard (User-Scoped Policy Registry)
+
+![Execution Guard](images/execution_guard_flow.png)
+
+Every on-chain action from the agent must now pass a **Deterministic Policy Check**. You define your own risk limits—like a personal safety net. The agent is forbidden from exceeding them.
+
+**How it works:**
+1. You set a policy: *Max Trade $500, Max Slippage 1%, Only Merchant Moe*.
+2. Agent decides to trade $600 → **REJECTED**.
+3. Agent tries a $400 trade → **APPROVED**.
+
+This moves AuxloNeo from an AI that "asks for permission" to an agent that operates within **hard, programmable boundaries**.
+
+### Deterministic Signal Engine (No More Hallucinations)
+
+![Treasury Signal Engine](images/treasury_signal_engine.png)
+
+The Trading Council no longer relies purely on AI "intuition". It starts with a **real data signal** from the **Treasury Signal Engine**.
+
+**The Engine's job:**
+1. Fetches live data from DefiLlama (oracles).
+2. Runs a deterministic heuristic: *If pool_A Apr > pool_B Apr + 2%, then Signal Buy*.
+3. Passes this opaque, data-driven recommendation to the Council.
+
+The Council's role shifts from "guessing" to **auditing** a specific signal. This drastically reduces hallucination-based risk.
+
+### Trading Council 2.0 (Data-Informed, Not AI-Led)
+
+The council remains, but its workflow is now anchored.
+
+**The New Flow:**
+1. **Treasury Engine**: Emits "Buy MNT Pool - APY 23%".
+2. **Analysts**: Audit this specific signal. "Is APY stable? Is the TVL real?".
+3. **Strategist**: Crafts the exact plan.
+4. **Guard**: Checks against your **Execution Guard** policy. **APPROVED**.
+5. **Executor**: Runs the on-chain transaction.
+
+### Verifiable Audit Trail (Institutional Trust)
+
+![Audit Trail](images/audit_trail.png)
+
+Every Mantle on-chain action is now bundled into an **Audit Packet** and hashed for verifiable proof.
+
+**Packet Contents:**
+- `proposal`: The original Trading Plan.
+- `outcome`: The real transaction result.
+- `audit`: The Judge's verdict and score.
+- `evidenceHashed`: SHA-256 hash of the above.
+
+**Why it matters:**
+- **Transparency**: You can see *exactly* why the agent made a trade.
+- **Dispute Resolution**: A third party can verify the agent's reasoning without needing access to your raw session data.
+- **Compliance Ready**: These hashes can be anchored on Mantle for a permanent, unchangeable record.
+
 ![Agent Architecture](images/agent_architecture.png)
 
 ```
@@ -79,37 +133,6 @@ Three KV namespaces handle all persistence: **SESSIONS** (7-day TTL message hist
 ![Tool Execution](images/tool_execution.png)
 
 The agent executes tools in a loop (up to 8 rounds). Tool categories: **Web** (search, fetch), **Blockchain** (Mantle suite via Muscle), **Execution** (remote_exec), **Messaging** (send_message), and **Utility** (current_time, remember, recall).
-
-### Trading Council
-
-The Trading Council is a three-stage orchestration loop for Mantle DeFi operations, designed to maximize yield while minimizing risk and MEV exposure.
-
-#### 1. Diverse Analysis (The Analysts)
-
-When a trading request is made, the agent spawns three distinct analyst personas to provide a range of perspectives on the same request:
-
-- **Analyst Alpha (Aggressive)**: Focuses on high-yield opportunities and momentum; bold and data-driven.
-- **Analyst Beta (Conservative)**: Focuses on risk mitigation and TVL stability; cautious approach.
-- **Analyst Gamma (Balanced)**: Provides a neutral perspective, balancing yield and safety.
-
-#### 2. Synthesis (The Strategist)
-
-The **Lead Strategist** synthesizes the three divergent analyst signals into a single, concrete, and executable **Trading Plan**. This plan specifies the exact tokens, amounts, and routers to be used.
-
-#### 3. Risk Audit (The Guard)
-
-Before any execution, the **Risk Guard** performs a final security audit. The Guard must either **APPROVE** or **REJECT** the plan based on security risks, slippage, and protocol safety. If rejected, the trade is aborted and the user is notified with the reason.
-
-#### Post-Trade Learning (The Judge)
-
-After every Mantle tool execution, a **Trading Judge** compares the proposed Trading Plan with the actual outcome. It produces a `TradeAudit` with:
-
-- **Verdict**: EXCELLENT | SATISFACTORY | POOR | CATASTROPHIC
-- **Score**: 0-100
-- **Reasoning**: Detailed analysis of deviations
-- **Lesson Learned**: A specific instruction to avoid similar mistakes
-
-These lessons are saved to the `MEMORY` KV namespace and injected back into future sessions, allowing the agent to learn from its trading history.
 
 ### Edge vs Traditional
 
