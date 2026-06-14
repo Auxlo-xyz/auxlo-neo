@@ -66,11 +66,9 @@ function convertInner(text: string): string {
       const close = rest.indexOf('**', 2);
       if (close !== -1) {
         const inner = rest.slice(2, close);
-        if (inner.trim()) {
-          out += '*' + convertInner(inner) + '*';
-          i += close + 2;
-          continue;
-        }
+        out += '*' + convertInner(inner) + '*';
+        i += close + 2;
+        continue;
       }
     }
 
