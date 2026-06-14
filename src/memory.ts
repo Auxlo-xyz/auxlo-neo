@@ -215,6 +215,50 @@ export async function getUsage(kv: KVNamespace, sessionId: string): Promise<Usag
   return raw as UsageStats | null;
 }
 
+/**
+ * Save a trading lesson for a user.
+ * Uses userId for cross-session persistence, falls back to sessionId.
+ */
+export async function saveTradingLesson(
+  kv: KVNamespace,
+  userId: string | undefined,
+  sessionId: string,
+  lesson: { verdict: string; lesson: string; score: number; timestamp: number }
+): Promise<void> {
+  const keyPrefix = userId ? `lesson:${userId}` : `lesson:${sessionId}`;
+  const key = `${keyPrefix}:${Date.now()}`;
+  await kv.put(key, JSON.stringify(lesson), { expirationTtl: MEMORY_TTL });
+}
+
+/**
+ * Get recent trading lessons for a user.
+ */
+export async function getTradingLessons(
+  kv: KVNamespace,
+  userId: string | undefined,
+  sessionId: string,
+  limit: number = 5
+): Promise<Array<{ verdict: string; lesson: string; score: number }>> {
+  const keyPrefix = userId ? `lesson:${userId}` : `lesson:${sessionId}`;
+  const list = await kv.list({ prefix: keyPrefix, limit });
+  
+  if (list.keys.length === 0) return [];
+
+  const lessons: any[] = [];
+  for (const key of list.keys) {
+    const val = await kv.get(key.name);
+    if (val) {
+      const l = JSON.parse(val);
+      lessons.push({
+        verdict: l.verdict,
+        lesson: l.lesson,
+        score: l.score,
+      });
+    }
+  }
+  return lessons;
+}
+
 export async function revokeAccess(env: Env, grantId: string): Promise<boolean> {
   const grant = await env.CONFIG.get(`grant:${grantId}`, "json") as AccessGrant | null;
   if (!grant) return false;

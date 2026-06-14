@@ -1,7 +1,7 @@
 import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest, TradingPlan, TradeAudit } from "./types";
 import { callProvider } from "./providers";
 import { getToolDefinitions, executeTool } from "./tools";
-import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage, getSessionWithRLS, saveSessionWithRLS } from "./memory";
+import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage, getSessionWithRLS, saveSessionWithRLS, saveTradingLesson, getTradingLessons } from "./memory";
 import { compactMessages } from "./compression";
 import { MAX_HISTORY_LIMIT } from "./types";
 import { BUILTIN, loadCustomProviders } from "./providers";
@@ -251,20 +251,12 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
     ? await getMemory(env.MEMORY, sessionId, userId, env) 
     : await getMemory(env.MEMORY, sessionId);
 
-  // Specifically load Trading Lessons
+  // Specifically load Trading Lessons using the RLS-aware helper
   let lessonsContext = "";
-  if (userId) {
-    const lessonKeys = await env.MEMORY.list({ prefix: `lesson:${sessionId}:`, limit: 5 });
-    if (lessonKeys.keys.length > 0) {
-      const lessons: string[] = [];
-      for (const key of lessonKeys.keys) {
-        const val = await env.MEMORY.get(key.name);
-        if (val) {
-          const l = JSON.parse(val) as { lesson: string; verdict: string; score: number };
-          lessons.push(`[${l.verdict} ${l.score}/100] ${l.lesson}`);
-        }
-      }
-      lessonsContext = `\n\n---\nRECENT TRADING LESSONS (Internalized Experience):\n${lessons.join("\n")}`;
+  if (userId || sessionId) {
+    const lessons = await getTradingLessons(env.MEMORY, userId, sessionId);
+    if (lessons.length > 0) {
+      lessonsContext = `\n\n---\nRECENT TRADING LESSONS (Internalized Experience):\n${lessons.map(l => `[${l.verdict} ${l.score}/100] ${l.lesson}`).join("\n")}`;
     }
   }
 
@@ -389,13 +381,18 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
               const plan = JSON.parse(pendingPlanRaw) as TradingPlan;
               const audit = await runTradingAudit(env, req, session, plan, toolResult.content);
               
-              // Save the lesson to cross-session memory
-              await env.MEMORY.put(`lesson:${sessionId}:${Date.now()}`, JSON.stringify({
-                verdict: audit.verdict,
-                lesson: audit.lessonLearned,
-                score: audit.score,
-                timestamp: Date.now()
-              }), { expirationTtl: 60 * 60 * 24 * 30 });
+              // Save the lesson using the RLS-aware helper
+              await saveTradingLesson(
+                env.MEMORY, 
+                userId, 
+                sessionId, 
+                {
+                  verdict: audit.verdict,
+                  lesson: audit.lessonLearned,
+                  score: audit.score,
+                  timestamp: Date.now()
+                }
+              );
 
               // Clear the plan so we don't audit the same trade multiple times
               await env.SESSIONS.delete(`plan:${sessionId}`);
