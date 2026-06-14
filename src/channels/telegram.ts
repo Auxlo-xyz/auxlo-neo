@@ -83,9 +83,7 @@ const BOT_COMMANDS = [
   { command: "usage", description: "Show token usage stats" },
   { command: "wallet", description: "Manage your Mantle wallet" },
   { command: "trading", description: "Toggle professional trading council mode" },
-  { command: "grant", description: "Share data with another user" },
-  { command: "revoke", description: "Revoke data sharing" },
-  { command: "shares", description: "List shared resources" },
+  { command: "grant", description: "Share or manage data access" },
   { command: "guard", description: "Set risk limits for trades" },
 ];
 
@@ -295,6 +293,14 @@ function confirmKeyboard(): Record<string, unknown> {
 
 function cancelKeyboard(callbackData: string = "endpoint_cancel"): Record<string, unknown> {
   return { inline_keyboard: [[{ text: "Cancel", callback_data: callbackData }]] };
+}
+
+function revokeKeyboard(shares: string[]): Record<string, unknown> {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < shares.length; i++) {
+    rows.push([{ text: `Revoke \`${shares[i].split(":").pop() || shares[i]}\``, callback_data: `grant_revoke:${shares[i]}` }]);
+  }
+  return { inline_keyboard: rows };
 }
 
 function resourceKeyboard(resources: string[]): Record<string, unknown> {
@@ -682,12 +688,38 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
 
   if (data === "grant_revoke") {
     const userId = `telegram:${cb.from.id.toString()}`;
-    await answerCallback(env, cb.id, "Revoking access...");
-    const { handleRevokeCommand } = await import("../grant-commands");
-    const result = await handleRevokeCommand(env, userId, ""); 
-    // Note: handleRevokeCommand might need a specific resourceId if not revoking all. 
-    // If it revokes all by default, this works. Otherwise, we need a revoke wizard.
-    await sendText(env, cb.message?.chat.id || 0, result.message);
+    await answerCallback(env, cb.id, "Loading shares...");
+
+    const { listGrantsForOwner } = await import("../grant-commands");
+    const ownedGrants = await listGrantsForOwner(env, userId);
+
+    if (!ownedGrants || ownedGrants.length === 0) {
+      await sendText(env, chatId, "You have no active grants to revoke.");
+      return;
+    }
+
+    const rows = ownedGrants.map(g => [{
+      text: `Revoke ${g.resource_id.split(":").pop() || g.resource_id}`,
+      callback_data: `grant_revoke_confirm:${g.grant_id}`
+    }]);
+
+    await sendText(env, chatId, "Select a grant to revoke:", { inline_keyboard: rows });
+    return;
+  }
+
+  if (data.startsWith("grant_revoke_confirm:")) {
+    const grantId = data.split(":")[1];
+    const userId = `telegram:${cb.from.id.toString()}`;
+    await answerCallback(env, cb.id, "Revoking...");
+
+    const { revokeAccessByGrantId } = await import("../grant-commands");
+    const success = await revokeAccessByGrantId(env, grantId);
+
+    if (success) {
+      await sendText(env, chatId, `✅ Access revoked: \`${grantId}\``);
+    } else {
+      await sendText(env, chatId, "Failed to revoke grant. It may have already expired.");
+    }
     return;
   }
 
@@ -1250,20 +1282,6 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
 
       case "guard": {
         await sendText(env, chatId, "🛡️ *Risk Guard Configuration*\n\nManage your autonomous trading limits to prevent hallucinations and protect your capital.", guardKeyboard());
-        return;
-      }
-
-      case "revoke": {
-        const { handleRevokeCommand } = await import("../grant-commands");
-        const result = await handleRevokeCommand(env, userId, cmd.args || "");
-        await sendText(env, chatId, result.message);
-        return;
-      }
-
-      case "shares": {
-        const { handleListSharesCommand } = await import("../grant-commands");
-        const result = await handleListSharesCommand(env, userId);
-        await sendText(env, chatId, result.message);
         return;
       }
 
