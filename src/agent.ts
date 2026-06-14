@@ -1,4 +1,4 @@
-import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest, TradingPlan, TradeAudit } from "./types";
+import type { Env, AgentRequest, AgentResponse, Message, ProviderRequest, TradingPlan, TradeAudit, AuditPacket } from "./types";
 import { callProvider } from "./providers";
 import { getToolDefinitions, executeTool } from "./tools";
 import { getSession, saveSession, createSession, addMessage, getMemory, trackUsage, getSessionWithRLS, saveSessionWithRLS, saveTradingLesson, getTradingLessons } from "./memory";
@@ -115,6 +115,13 @@ async function runTradingAudit(env: Env, req: AgentRequest, session: any, plan: 
       score: 50
     };
   }
+}
+
+async function generateEvidenceHash(packet: any): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(JSON.stringify(packet));
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are AuxloNeo, a living agent on Cloudflare Workers. You are not a general agent or chatbot.
@@ -292,8 +299,13 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
   // Move walletContext to the top and make it highly prominent to prevent AI from ignoring it
   const finalSystemPrompt = `${walletContext}\n\n${fullSystem}${skillSection}\n\nCurrently running on model: ${model} via ${providerDisplayName}.`;
 
+  // --- AUDIT TRAIL INSTRUCTION ---
+  // We inject a rule into the system prompt ensuring the agent knows its decisions are being hashed
+  const auditInstruction = `\n\n## AUDIT TRAIL & VERIFIABILITY\nYour decisions are permanently hashed and stored as Evidence Packets. Every trade you execute is linked to a deterministic signal and an Execution Guard check. You are accountable for the delta between the approved plan and the final outcome.`;
+  const finalPromptWithAudit = finalSystemPrompt + auditInstruction;
+
   const messages: Message[] = [
-    { role: "system", content: finalSystemPrompt },
+    { role: "system", content: finalPromptWithAudit },
     ...session.messages,
   ];
 
@@ -394,6 +406,22 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
               const plan = JSON.parse(pendingPlanRaw) as TradingPlan;
               const audit = await runTradingAudit(env, req, session, plan, toolResult.content);
               
+              // --- NEW: Evidence Hashing & Audit Trail ---
+              const signalRaw = await env.SESSIONS.get(`signal:${sessionId}`);
+              const packet: AuditPacket = {
+                tradeId: `trade_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+                userId: userId!,
+                timestamp: Date.now(),
+                plan,
+                signal: signalRaw ? JSON.parse(signalRaw) : { info: "No deterministic signal found" },
+                guardAudit: toolResult.content,
+                outcome: toolResult.content,
+              };
+              packet.evidenceHash = await generateEvidenceHash(packet);
+              
+              // Store full packet in CONFIG (or Mantle Data Streams) for verification
+              await env.CONFIG.put(`audit:${packet.tradeId}`, JSON.stringify(packet));
+              
               // Save the lesson using the RLS-aware helper
               await saveTradingLesson(
                 env.MEMORY, 
@@ -410,7 +438,7 @@ export async function agentChat(env: Env, req: AgentRequest): Promise<AgentRespo
               // Clear the plan so we don't audit the same trade multiple times
               await env.SESSIONS.delete(`plan:${sessionId}`);
               
-              console.log(`[JUDGE] Trade Audit Complete: ${audit.verdict} (${audit.score}/100). Lesson: ${audit.lessonLearned}`);
+              console.log(`[JUDGE] Trade Audit Complete: ${audit.verdict} (${audit.score}/100). Hash: ${packet.evidenceHash}`);
             } catch (e) {
               console.error(`[JUDGE] Audit Error: ${e}`);
             }

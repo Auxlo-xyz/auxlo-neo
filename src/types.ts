@@ -189,6 +189,17 @@ export interface TradeAudit {
   score: number; // 0-100
 }
 
+export interface AuditPacket {
+  tradeId: string;
+  userId: string;
+  timestamp: number;
+  plan: TradingPlan;
+  signal: any;
+  guardAudit: string;
+  outcome: string;
+  evidenceHash?: string;
+}
+
 export interface ProviderConfig {
   name: string;
   keyEnv: keyof Env;
