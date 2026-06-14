@@ -27,3 +27,4 @@ wrangler.toml
 # Agent context (contains local secrets, deploy info)
 AGENTS.md
 HACKATHON_STRATEGY.md
+research/
