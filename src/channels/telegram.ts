@@ -297,6 +297,14 @@ function cancelKeyboard(callbackData: string = "endpoint_cancel"): Record<string
   return { inline_keyboard: [[{ text: "Cancel", callback_data: callbackData }]] };
 }
 
+function resourceKeyboard(resources: string[]): Record<string, unknown> {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < resources.length; i++) {
+    rows.push([{ text: resources[i].split(":").pop() || resources[i], callback_data: `grant_res:${resources[i]}` }]);
+  }
+  return { inline_keyboard: rows };
+}
+
 function guardKeyboard(): Record<string, unknown> {
   return {
     inline_keyboard: [
@@ -351,6 +359,58 @@ async function handleCallbackQuery(env: Env, cb: TelegramCallbackQuery, ctx: Exe
   const messageId = cb.message?.message_id;
 
   if (!chatId) return;
+
+  if (data.startsWith("grant_res:")) {
+    const resourceId = data.split(":")[1];
+    const { getGrantWizardState, setGrantWizardState } = await import("../channels/telegram"); // This is a bit recursive, need to be careful or move helpers
+    const state = await getGrantWizardState(env, userId) || { started_at: Date.now() };
+    state.resourceId = resourceId;
+    state.step = "permission";
+    await setGrantWizardState(env, userId, state);
+    
+    await answerCallback(env, cb.id, "Resource selected");
+    if (messageId) {
+      await editText(env, chatId, messageId, `Selected: \`${resourceId}\`\n\nNow choose a permission level:`, {
+        inline_keyboard: [
+          [{ text: "Read", callback_data: "grant_perm:read" }, { text: "Write", callback_data: "grant_perm:write" }, { text: "Admin", callback_data: "grant_perm:admin" }],
+          [{ text: "Cancel", callback_data: "grant_cancel" }]
+        ]
+      });
+    }
+    return;
+  }
+
+  if (data.startsWith("grant_perm:")) {
+    const permission = data.split(":")[1];
+    const state = await getGrantWizardState(env, userId);
+    if (!state) return;
+    state.permission = permission;
+    state.step = "days";
+    await setGrantWizardState(env, userId, state);
+    
+    await answerCallback(env, cb.id, "Permission selected");
+    if (messageId) {
+      await editText(env, chatId, messageId, `Permission: ${permission.toUpperCase()}\n\nHow many days should this access last? (Optional, default 30). Send a number or /cancel.`, cancelKeyboard("grant_cancel"));
+    }
+    return;
+  }
+
+  if (data === "grant_start") {
+    await setGrantWizardState(env, userId, { step: "resource_id", started_at: Date.now() });
+    
+    // Fetch user's sessions to populate keyboard
+    const sessions = await env.SESSIONS.list({ prefix: `session:telegram:${cb.from.id}` });
+    const resourceIds = sessions.keys.map(k => k.name.replace("session:", ""));
+    
+    if (resourceIds.length === 0) {
+      await sendText(env, chatId, "No active sessions found to share. Start a conversation first!");
+      return;
+    }
+
+    await answerCallback(env, cb.id, "Selecting resource...");
+    await sendText(env, chatId, "Which session would you like to share?", resourceKeyboard(resourceIds));
+    return;
+  }
 
   // ---- Provider selection ----
   if (data.startsWith("set_provider:")) {
@@ -1140,7 +1200,19 @@ async function handleMessage(env: Env, msg: TelegramMessage, ctx: ExecutionConte
       }
 
       case "grant": {
-        await sendText(env, chatId, "*Grant Management*\n\nManage who has access to your data.", grantActionKeyboard());
+        if (cmd.args) {
+          // Backward compatibility
+          const { handleGrantCommand } = await import("../grant-commands");
+          const result = await handleGrantCommand(env, userId, cmd.args);
+          await sendText(env, chatId, result.message);
+        } else {
+          // Trigger inline keyboard instead of text prompt
+          await sendText(env, chatId, "What would you like to do with data sharing?", {
+            inline_keyboard: [
+              [{ text: "🆕 Create New Grant", callback_data: "grant_start" }, { text: "❌ Revoke Existing", callback_data: "grant_revoke" }]
+            ]
+          });
+        }
         return;
       }
 
