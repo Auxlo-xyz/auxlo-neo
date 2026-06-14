@@ -122,7 +122,7 @@ export async function grantAccess(
   }
   
   const grant: AccessGrant = {
-    grant_id: `access:${resourceType}:${resourceId}:${targetUserId}`,
+    grant_id: `grant:${resourceType}:${resourceId}:${targetUserId}`,
     resource_type: resourceType,
     resource_id: resourceId,
     owner_id: requestorId,
@@ -136,19 +136,42 @@ export async function grantAccess(
   await env.CONFIG.put(grantKey, JSON.stringify(grant), {
     expirationTtl: expiresInDays ? expiresInDays * 24 * 60 * 60 : undefined
   });
+
+  // INDEXING: Store grant in owner's and recipient's lists for easy retrieval
+  const ownerListKey = `grant_by_owner:${requestorId}`;
+  const owned = (await env.CONFIG.get(ownerListKey, "json") as AccessGrant[]) || [];
+  owned.push(grant);
+  await env.CONFIG.put(ownerListKey, JSON.stringify(owned));
+
+  const recipientListKey = `grant_by_recipient:${targetUserId}`;
+  const received = (await env.CONFIG.get(recipientListKey, "json") as AccessGrant[]) || [];
+  received.push(grant);
+  await env.CONFIG.put(recipientListKey, JSON.stringify(received));
 }
 
 /**
- * Revoke access by grant ID (simple version for commands)
+ * Revoke access by grant ID
  */
 export async function revokeAccessByGrantId(env: Env, grantId: string): Promise<boolean> {
   try {
-    const grant = await env.CONFIG.get(`grant:${grantId}`, "json") as AccessGrant | null;
+    const grant = await env.CONFIG.get(grantId, "json") as AccessGrant | null;
     if (!grant) return false;
     
     const grantKey = `access:${grant.resource_type}:${grant.resource_id}:${grant.granted_to}`;
     await env.CONFIG.delete(grantKey);
-    await env.CONFIG.delete(`grant:${grantId}`);
+    await env.CONFIG.delete(grantId);
+
+    // Update indexing lists
+    const ownerListKey = `grant_by_owner:${grant.owner_id}`;
+    const owned = (await env.CONFIG.get(ownerListKey, "json") as AccessGrant[]) || [];
+    const filteredOwned = owned.filter(g => g.grant_id !== grantId);
+    await env.CONFIG.put(ownerListKey, JSON.stringify(filteredOwned));
+
+    const recipientListKey = `grant_by_recipient:${grant.granted_to}`;
+    const received = (await env.CONFIG.get(recipientListKey, "json") as AccessGrant[]) || [];
+    const filteredReceived = received.filter(g => g.grant_id !== grantId);
+    await env.CONFIG.put(recipientListKey, JSON.stringify(filteredReceived));
+
     return true;
   } catch {
     return false;
