@@ -1,0 +1,8 @@
+{
+  "name": "Remix: AuxloNeo - Main • 1",
+  "description": "An autonomous Cloudflare Workers AI Agent with blockchain indexing, telegram integration, and periodic scanning capabilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

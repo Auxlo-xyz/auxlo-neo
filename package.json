@@ -1,0 +1,21 @@
+{
+  "name": "auxlo-neo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev --port 3000 --ip 0.0.0.0",
+    "start": "wrangler dev --port 3000 --ip 0.0.0.0",
+    "build": "npm run typecheck",
+    "lint": "npm run typecheck",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260603.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.100.0"
+  },
+  "dependencies": {
+    "viem": "^2.52.2"
+  }
+}

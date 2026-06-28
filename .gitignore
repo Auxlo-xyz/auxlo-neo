@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Wrangler
+.wrangler/
+.dev.vars
+
+# Build output
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.production
+
+# Wrangler (contains account-specific KV IDs)
+wrangler.toml
+
+# Agent context (contains local secrets, deploy info)
+AGENTS.md
+HACKATHON_STRATEGY.md
+ARCHITECTURE.md
+research/

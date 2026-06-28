@@ -1,0 +1,39 @@
+name = "auxlo-neo"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Cron triggers - configure your schedules here
+[triggers]
+crons = ["* * * * *", "*/5 * * * *", "0 * * * *"]
+
+# SESSIONS KV namespace -- create with: wrangler kv namespace create SESSIONS
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "YOUR_SESSIONS_KV_ID"
+
+# MEMORY KV namespace -- create with: wrangler kv namespace create MEMORY
+[[kv_namespaces]]
+binding = "MEMORY"
+id = "YOUR_MEMORY_KV_ID"
+
+# CONFIG KV namespace -- create with: wrangler kv namespace create CONFIG
+[[kv_namespaces]]
+binding = "CONFIG"
+id = "YOUR_CONFIG_KV_ID"
+
+# D1 Database -- create with: wrangler d1 create auxlo-docs
+[[d1_databases]]
+binding = "DB"
+database_name = "auxlo-docs"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# Environment Variables
+[vars]
+# TELEGRAM_BOT_TOKEN = ""
+# GEMINI_API_KEY = ""
+
+# Service binding to auxlo-muscle Cloudflare Worker
+# Ensure auxlo-muscle is deployed before binding
+[[services]]
+binding = "MUSCLE"
+service = "auxlo-muscle"
